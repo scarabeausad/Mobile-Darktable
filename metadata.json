@@ -1,0 +1,6 @@
+{
+  "name": "Darktable Mobile",
+  "description": "Professional photography lighttable and RAW darkroom workflow for Android with non-destructive image adjustments, filmic tone curves, exposure, color grading, live histogram, and export manager.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
