@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,8 +25,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
@@ -58,17 +57,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.ParameterSlider
-import com.example.ui.theme.DtAmberDark
-import com.example.ui.theme.DtAmberPrimary
-import com.example.ui.theme.DtBorder
-import com.example.ui.theme.DtCardDark
-import com.example.ui.theme.DtDeepDark
 import com.example.ui.theme.DtLabelGreen
-import com.example.ui.theme.DtPanelDark
-import com.example.ui.theme.DtSecondaryBlue
-import com.example.ui.theme.DtTextPrimary
-import com.example.ui.theme.DtTextSecondary
-import com.example.ui.theme.DtTextTertiary
+import com.example.ui.theme.DtThemeColors
 import com.example.viewmodel.DarktableMode
 import com.example.viewmodel.DarktableViewModel
 
@@ -77,6 +67,7 @@ fun ExportScreen(
     viewModel: DarktableViewModel,
     modifier: Modifier = Modifier
 ) {
+    val palette = DtThemeColors.current
     val photo by viewModel.selectedPhoto.collectAsState()
     val isExporting by viewModel.isExporting.collectAsState()
     val exportMsg by viewModel.exportMessage.collectAsState()
@@ -93,8 +84,8 @@ fun ExportScreen(
     }
 
     if (photo == null) {
-        Box(modifier = modifier.fillMaxSize().background(DtDeepDark), contentAlignment = Alignment.Center) {
-            Text("No photograph selected", color = DtTextSecondary)
+        Box(modifier = modifier.fillMaxSize().background(palette.deepDark), contentAlignment = Alignment.Center) {
+            Text("No photograph selected", color = palette.textSecondary)
         }
         return
     }
@@ -103,13 +94,13 @@ fun ExportScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        containerColor = DtDeepDark,
+        containerColor = palette.deepDark,
         topBar = {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(DtPanelDark)
-                    .border(width = 0.5.dp, color = DtBorder)
+                    .background(palette.panelDark)
+                    .border(width = 0.5.dp, color = palette.border)
                     .padding(horizontal = 8.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -118,20 +109,20 @@ fun ExportScreen(
                     onClick = { viewModel.setMode(DarktableMode.DARKROOM) },
                     modifier = Modifier.testTag("btn_back_from_export")
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = DtTextPrimary)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = palette.textPrimary)
                 }
 
                 Column {
                     Text(
                         text = "EXPORT MANAGER",
-                        color = DtTextPrimary,
+                        color = palette.textPrimary,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp
                     )
                     Text(
                         text = "High-fidelity rendering of developed darkroom pipeline",
-                        color = DtTextTertiary,
+                        color = palette.textTertiary,
                         fontSize = 11.sp
                     )
                 }
@@ -151,8 +142,8 @@ fun ExportScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
-                    .border(1.dp, DtBorder, RoundedCornerShape(8.dp)),
-                colors = CardDefaults.cardColors(containerColor = DtCardDark)
+                    .border(1.dp, palette.border, RoundedCornerShape(8.dp)),
+                colors = CardDefaults.cardColors(containerColor = palette.cardDark)
             ) {
                 Column(
                     modifier = Modifier
@@ -162,25 +153,25 @@ fun ExportScreen(
                 ) {
                     Text(
                         text = "ACTIVE PHOTO WORKFLOW",
-                        color = DtAmberPrimary,
+                        color = palette.accentPrimary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
                     Text(
                         text = currentPhoto.title,
-                        color = DtTextPrimary,
+                        color = palette.textPrimary,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
                         text = "${currentPhoto.fileFormat} • Source: ${currentPhoto.dimensions} (${currentPhoto.megaPixels})",
-                        color = DtTextSecondary,
+                        color = palette.textSecondary,
                         fontSize = 12.sp
                     )
                     Text(
                         text = "Pipeline: ${currentPhoto.history.size} modules active (Filmic, Color Calibration, Tone Curve)",
-                        color = DtTextTertiary,
+                        color = palette.textTertiary,
                         fontSize = 11.sp
                     )
                 }
@@ -190,7 +181,7 @@ fun ExportScreen(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = "TARGET ENCODING FORMAT",
-                    color = DtTextTertiary,
+                    color = palette.textTertiary,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold
@@ -204,16 +195,16 @@ fun ExportScreen(
                             onClick = { format = fmt },
                             label = { Text(fmt, fontWeight = FontWeight.Bold) },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = DtAmberPrimary,
-                                selectedLabelColor = DtDeepDark,
-                                containerColor = DtCardDark,
-                                labelColor = DtTextSecondary
+                                selectedContainerColor = palette.accentPrimary,
+                                selectedLabelColor = palette.onAccent,
+                                containerColor = palette.cardDark,
+                                labelColor = palette.textSecondary
                             ),
                             border = FilterChipDefaults.filterChipBorder(
                                 enabled = true,
                                 selected = isSelected,
-                                borderColor = DtBorder,
-                                selectedBorderColor = DtAmberPrimary
+                                borderColor = palette.border,
+                                selectedBorderColor = palette.accentPrimary
                             ),
                             modifier = Modifier.testTag("chip_format_$fmt")
                         )
@@ -240,7 +231,7 @@ fun ExportScreen(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = "MAXIMUM PIXEL DIMENSION",
-                    color = DtTextTertiary,
+                    color = palette.textTertiary,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold
@@ -260,10 +251,10 @@ fun ExportScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(if (isSelected) DtAmberDark.copy(alpha = 0.3f) else DtCardDark)
+                                .background(if (isSelected) palette.accentContainer.copy(alpha = 0.35f) else palette.cardDark)
                                 .border(
-                                    width = if (isSelected) 1.dp else 0.dp,
-                                    color = if (isSelected) DtAmberPrimary else Color.Transparent,
+                                    width = if (isSelected) 1.dp else 0.5.dp,
+                                    color = if (isSelected) palette.accentPrimary else palette.border,
                                     shape = RoundedCornerShape(6.dp)
                                 )
                                 .clickable { maxDimension = dim }
@@ -273,7 +264,7 @@ fun ExportScreen(
                         ) {
                             Text(
                                 text = label,
-                                color = if (isSelected) DtAmberPrimary else DtTextPrimary,
+                                color = if (isSelected) palette.accentPrimary else palette.textPrimary,
                                 fontSize = 13.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                             )
@@ -281,7 +272,7 @@ fun ExportScreen(
                                 Icon(
                                     imageVector = Icons.Default.CheckCircle,
                                     contentDescription = "Selected",
-                                    tint = DtAmberPrimary,
+                                    tint = palette.accentPrimary,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -295,8 +286,8 @@ fun ExportScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
-                    .border(1.dp, DtBorder, RoundedCornerShape(8.dp)),
-                colors = CardDefaults.cardColors(containerColor = DtPanelDark)
+                    .border(1.dp, palette.border, RoundedCornerShape(8.dp)),
+                colors = CardDefaults.cardColors(containerColor = palette.panelDark)
             ) {
                 Row(
                     modifier = Modifier
@@ -308,19 +299,19 @@ fun ExportScreen(
                     Icon(
                         imageVector = Icons.Default.PhotoLibrary,
                         contentDescription = null,
-                        tint = DtSecondaryBlue,
+                        tint = palette.secondaryBlue,
                         modifier = Modifier.size(24.dp)
                     )
                     Column {
                         Text(
                             text = "Destination: Android Pictures/Darktable",
-                            color = DtTextPrimary,
+                            color = palette.textPrimary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
                             text = "Public gallery storage with full color space retention",
-                            color = DtTextTertiary,
+                            color = palette.textTertiary,
                             fontSize = 10.sp
                         )
                     }
@@ -333,19 +324,19 @@ fun ExportScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
-                            if (savedUri != null) DtLabelGreen.copy(alpha = 0.2f) else DtAmberDark.copy(alpha = 0.2f),
+                            if (savedUri != null) DtLabelGreen.copy(alpha = 0.2f) else palette.accentContainer.copy(alpha = 0.2f),
                             RoundedCornerShape(6.dp)
                         )
                         .border(
                             1.dp,
-                            if (savedUri != null) DtLabelGreen else DtAmberPrimary,
+                            if (savedUri != null) DtLabelGreen else palette.accentPrimary,
                             RoundedCornerShape(6.dp)
                         )
                         .padding(12.dp)
                 ) {
                     Text(
                         text = exportMsg!!,
-                        color = if (savedUri != null) Color(0xFF81C784) else DtAmberPrimary,
+                        color = if (savedUri != null) DtLabelGreen else palette.accentPrimary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -365,8 +356,8 @@ fun ExportScreen(
                         }
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = DtAmberPrimary,
-                        contentColor = DtDeepDark
+                        containerColor = palette.accentPrimary,
+                        contentColor = palette.onAccent
                     ),
                     enabled = !isExporting,
                     modifier = Modifier
@@ -376,7 +367,7 @@ fun ExportScreen(
                 ) {
                     if (isExporting) {
                         CircularProgressIndicator(
-                            color = DtDeepDark,
+                            color = palette.onAccent,
                             strokeWidth = 2.dp,
                             modifier = Modifier.size(20.dp)
                         )
@@ -399,8 +390,8 @@ fun ExportScreen(
                             }
                             context.startActivity(Intent.createChooser(shareIntent, "Share Developed Photograph"))
                         },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = DtSecondaryBlue),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, DtSecondaryBlue),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.secondaryBlue),
+                        border = BorderStroke(1.dp, palette.secondaryBlue),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(46.dp)

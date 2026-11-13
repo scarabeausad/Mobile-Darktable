@@ -52,7 +52,11 @@ data class EditParams(
     // Geometry
     val rotationAngle: Float = 0f,     // -45 to +45 deg
     val flipHorizontal: Boolean = false,
-    val cropAspectRatio: String = "Original" // "Original", "1:1", "4:3", "3:2", "16:9"
+    val cropAspectRatio: String = "Original", // "Original", "Free", "1:1", "4:3", "3:2", "16:9"
+    val cropLeft: Float = 0f,          // 0.0 to 1.0 normalized
+    val cropTop: Float = 0f,           // 0.0 to 1.0 normalized
+    val cropRight: Float = 1f,         // 0.0 to 1.0 normalized
+    val cropBottom: Float = 1f         // 0.0 to 1.0 normalized
 ) {
     fun toJson(): String {
         val json = JSONObject()
@@ -91,6 +95,10 @@ data class EditParams(
         json.put("rotationAngle", rotationAngle.toDouble())
         json.put("flipHorizontal", flipHorizontal)
         json.put("cropAspectRatio", cropAspectRatio)
+        json.put("cropLeft", cropLeft.toDouble())
+        json.put("cropTop", cropTop.toDouble())
+        json.put("cropRight", cropRight.toDouble())
+        json.put("cropBottom", cropBottom.toDouble())
         return json.toString()
     }
 
@@ -99,6 +107,10 @@ data class EditParams(
             if (jsonStr.isNullOrEmpty()) return EditParams()
             return try {
                 val json = JSONObject(jsonStr)
+                val cLeft = json.optDouble("cropLeft", 0.0).toFloat().coerceIn(0f, 0.9f)
+                val cTop = json.optDouble("cropTop", 0.0).toFloat().coerceIn(0f, 0.9f)
+                val cRight = json.optDouble("cropRight", 1.0).toFloat().coerceIn(cLeft + 0.05f, 1f)
+                val cBottom = json.optDouble("cropBottom", 1.0).toFloat().coerceIn(cTop + 0.05f, 1f)
                 EditParams(
                     exposure = json.optDouble("exposure", 0.0).toFloat(),
                     contrast = json.optDouble("contrast", 0.0).toFloat(),
@@ -134,7 +146,11 @@ data class EditParams(
                     blueWeight = json.optDouble("blueWeight", 11.0).toFloat(),
                     rotationAngle = json.optDouble("rotationAngle", 0.0).toFloat(),
                     flipHorizontal = json.optBoolean("flipHorizontal", false),
-                    cropAspectRatio = json.optString("cropAspectRatio", "Original")
+                    cropAspectRatio = json.optString("cropAspectRatio", "Original"),
+                    cropLeft = cLeft,
+                    cropTop = cTop,
+                    cropRight = cRight,
+                    cropBottom = cBottom
                 )
             } catch (e: Exception) {
                 EditParams()

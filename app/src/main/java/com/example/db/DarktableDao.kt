@@ -13,6 +13,15 @@ interface DarktableDao {
     @Query("SELECT * FROM photos ORDER BY captureDate DESC")
     fun getAllPhotos(): Flow<List<PhotoEntity>>
 
+    @Query("SELECT * FROM photos ORDER BY captureDate DESC")
+    suspend fun getAllPhotosOnce(): List<PhotoEntity>
+
+    @Query("SELECT COUNT(*) FROM photos")
+    suspend fun getPhotoCount(): Int
+
+    @Query("SELECT COUNT(*) FROM styles")
+    suspend fun getStyleCount(): Int
+
     @Query("SELECT * FROM photos WHERE id = :id LIMIT 1")
     suspend fun getPhotoById(id: String): PhotoEntity?
 

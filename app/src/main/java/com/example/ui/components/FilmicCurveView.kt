@@ -14,17 +14,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.engine.DarktableEngine
-import com.example.ui.theme.DtAmberPrimary
-import com.example.ui.theme.DtBorder
-import com.example.ui.theme.DtDeepDark
-import com.example.ui.theme.DtTealFilmic
+import com.example.ui.theme.DtThemeColors
 
 @Composable
 fun FilmicCurveView(
@@ -33,12 +29,14 @@ fun FilmicCurveView(
     contrast: Float,
     modifier: Modifier = Modifier
 ) {
+    val palette = DtThemeColors.current
+
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(130.dp)
-            .background(DtDeepDark, RoundedCornerShape(8.dp))
-            .border(1.dp, DtBorder, RoundedCornerShape(8.dp))
+            .background(palette.histoBg, RoundedCornerShape(8.dp))
+            .border(1.dp, palette.border, RoundedCornerShape(8.dp))
             .padding(8.dp)
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -46,7 +44,7 @@ fun FilmicCurveView(
             val height = size.height
 
             // 1. Grid
-            val gridColor = Color(0xFF24242E)
+            val gridColor = palette.histoGrid
             for (i in 1..3) {
                 val gx = width * (i / 4f)
                 val gy = height * (i / 4f)
@@ -56,7 +54,7 @@ fun FilmicCurveView(
 
             // 2. Linear identity diagonal (neutral reference line)
             drawLine(
-                color = Color(0xFF383848),
+                color = palette.border,
                 start = Offset(0f, height),
                 end = Offset(width, 0f),
                 strokeWidth = 1.dp.toPx()
@@ -76,30 +74,30 @@ fun FilmicCurveView(
             // Glow under-layer
             drawPath(
                 path = path,
-                color = DtAmberPrimary.copy(alpha = 0.35f),
+                color = palette.accentPrimary.copy(alpha = 0.35f),
                 style = Stroke(width = 4.dp.toPx())
             )
 
             // Sharp active curve
             drawPath(
                 path = path,
-                color = DtAmberPrimary,
+                color = palette.accentPrimary,
                 style = Stroke(width = 2.dp.toPx())
             )
 
             // Reference control point indicators
             val toeX = (toe / 100f) * 0.35f * width
             val toeY = height - (DarktableEngine.evaluateFilmicCurve(toeX / width, toe, shoulder, contrast) * height)
-            drawCircle(DtTealFilmic, radius = 3.5.dp.toPx(), center = Offset(toeX, toeY))
+            drawCircle(palette.tealAccent, radius = 3.5.dp.toPx(), center = Offset(toeX, toeY))
 
             val shoulderX = width - ((shoulder / 100f) * 0.35f * width)
             val shoulderY = height - (DarktableEngine.evaluateFilmicCurve(shoulderX / width, toe, shoulder, contrast) * height)
-            drawCircle(DtAmberPrimary, radius = 3.5.dp.toPx(), center = Offset(shoulderX, shoulderY))
+            drawCircle(palette.accentPrimary, radius = 3.5.dp.toPx(), center = Offset(shoulderX, shoulderY))
         }
 
         Text(
             text = "FILMIC RGB S-CURVE",
-            color = Color(0xFF888898),
+            color = palette.textTertiary,
             fontSize = 9.sp,
             fontFamily = FontFamily.Monospace,
             modifier = Modifier.align(Alignment.TopStart)

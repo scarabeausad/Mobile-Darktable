@@ -16,9 +16,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import com.example.ui.theme.DtAmberPrimary
 import com.example.ui.theme.DtLabelRed
-import com.example.ui.theme.DtTextTertiary
+import com.example.ui.theme.DtThemeColors
 
 @Composable
 fun RatingBar(
@@ -29,6 +28,8 @@ fun RatingBar(
     modifier: Modifier = Modifier,
     starSize: Int = 20
 ) {
+    val palette = DtThemeColors.current
+
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
@@ -38,7 +39,7 @@ fun RatingBar(
         Icon(
             imageVector = Icons.Default.Close,
             contentDescription = "Reject photo",
-            tint = if (isRejected) DtLabelRed else DtTextTertiary.copy(alpha = 0.5f),
+            tint = if (isRejected) DtLabelRed else palette.textTertiary.copy(alpha = 0.5f),
             modifier = Modifier
                 .size((starSize + 2).dp)
                 .clickable { onRejectToggle() }
@@ -52,7 +53,7 @@ fun RatingBar(
             Icon(
                 imageVector = if (isFilled) Icons.Default.Star else Icons.Outlined.Star,
                 contentDescription = "$i stars",
-                tint = if (isFilled) DtAmberPrimary else DtTextTertiary.copy(alpha = 0.4f),
+                tint = if (isFilled) palette.accentPrimary else palette.textTertiary.copy(alpha = 0.4f),
                 modifier = Modifier
                     .size(starSize.dp)
                     .clickable {

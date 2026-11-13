@@ -24,9 +24,10 @@ import com.example.ui.screens.DarkroomScreen
 import com.example.ui.screens.ExifInspectorScreen
 import com.example.ui.screens.ExportScreen
 import com.example.ui.screens.LighttableScreen
+import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.StylesScreen
 import com.example.ui.theme.DarktableTheme
-import com.example.ui.theme.DtDeepDark
+import com.example.ui.theme.DtThemeColors
 import com.example.viewmodel.DarktableMode
 import com.example.viewmodel.DarktableViewModel
 
@@ -35,8 +36,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            DarktableTheme {
-                val viewModel: DarktableViewModel = viewModel()
+            val viewModel: DarktableViewModel = viewModel()
+            val colorScheme by viewModel.colorScheme.collectAsState()
+            DarktableTheme(appColorScheme = colorScheme) {
                 DarktableApp(viewModel = viewModel)
             }
         }
@@ -49,18 +51,19 @@ fun DarktableApp(
     modifier: Modifier = Modifier
 ) {
     val currentMode by viewModel.currentMode.collectAsState()
+    val palette = DtThemeColors.current
 
     Scaffold(
         modifier = modifier
             .fillMaxSize()
-            .background(DtDeepDark)
+            .background(palette.deepDark)
             .windowInsetsPadding(WindowInsets.safeDrawing),
-        containerColor = DtDeepDark
-    ) { innerPadding ->
+        containerColor = palette.deepDark
+    ) { _ ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(DtDeepDark)
+                .background(palette.deepDark)
         ) {
             AnimatedContent(
                 targetState = currentMode,
@@ -73,6 +76,7 @@ fun DarktableApp(
                     DarktableMode.STYLES -> StylesScreen(viewModel = viewModel)
                     DarktableMode.EXIF_INFO -> ExifInspectorScreen(viewModel = viewModel)
                     DarktableMode.EXPORT -> ExportScreen(viewModel = viewModel)
+                    DarktableMode.SETTINGS -> SettingsScreen(viewModel = viewModel)
                 }
             }
         }

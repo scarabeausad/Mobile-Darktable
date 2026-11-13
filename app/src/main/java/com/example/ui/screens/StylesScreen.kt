@@ -3,7 +3,6 @@ package com.example.ui.screens
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,24 +48,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.DarktableStyle
-import com.example.ui.theme.DtAmberDark
-import com.example.ui.theme.DtAmberPrimary
-import com.example.ui.theme.DtBorder
-import com.example.ui.theme.DtCardDark
-import com.example.ui.theme.DtDeepDark
 import com.example.ui.theme.DtLabelRed
-import com.example.ui.theme.DtPanelDark
-import com.example.ui.theme.DtTealFilmic
-import com.example.ui.theme.DtTextPrimary
-import com.example.ui.theme.DtTextSecondary
-import com.example.ui.theme.DtTextTertiary
+import com.example.ui.theme.DtThemeColors
 import com.example.viewmodel.DarktableMode
 import com.example.viewmodel.DarktableViewModel
 
@@ -75,6 +63,7 @@ fun StylesScreen(
     viewModel: DarktableViewModel,
     modifier: Modifier = Modifier
 ) {
+    val palette = DtThemeColors.current
     val styles by viewModel.styles.collectAsState()
     val photo by viewModel.selectedPhoto.collectAsState()
 
@@ -90,13 +79,13 @@ fun StylesScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        containerColor = DtDeepDark,
+        containerColor = palette.deepDark,
         topBar = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(DtPanelDark)
-                    .border(width = 0.5.dp, color = DtBorder)
+                    .background(palette.panelDark)
+                    .border(width = 0.5.dp, color = palette.border)
             ) {
                 Row(
                     modifier = Modifier
@@ -115,20 +104,20 @@ fun StylesScreen(
                             },
                             modifier = Modifier.testTag("btn_back_from_styles")
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = DtTextPrimary)
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = palette.textPrimary)
                         }
 
                         Column {
                             Text(
                                 text = "STYLES & PRESETS",
-                                color = DtTextPrimary,
+                                color = palette.textPrimary,
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 1.sp
                             )
                             Text(
                                 text = "Curated digital darkroom development recipes",
-                                color = DtTextTertiary,
+                                color = palette.textTertiary,
                                 fontSize = 11.sp
                             )
                         }
@@ -137,7 +126,7 @@ fun StylesScreen(
                     if (photo != null) {
                         Button(
                             onClick = { showSaveStyleDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = DtAmberPrimary, contentColor = DtDeepDark),
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.accentPrimary, contentColor = palette.onAccent),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                             modifier = Modifier.height(34.dp).testTag("btn_save_as_style")
                         ) {
@@ -161,16 +150,16 @@ fun StylesScreen(
                             onClick = { selectedCategory = cat },
                             label = { Text(cat, fontSize = 12.sp) },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = DtAmberPrimary,
-                                selectedLabelColor = DtDeepDark,
-                                containerColor = DtCardDark,
-                                labelColor = DtTextSecondary
+                                selectedContainerColor = palette.accentPrimary,
+                                selectedLabelColor = palette.onAccent,
+                                containerColor = palette.cardDark,
+                                labelColor = palette.textSecondary
                             ),
                             border = FilterChipDefaults.filterChipBorder(
                                 enabled = true,
                                 selected = isSelected,
-                                borderColor = DtBorder,
-                                selectedBorderColor = DtAmberPrimary
+                                borderColor = palette.border,
+                                selectedBorderColor = palette.accentPrimary
                             )
                         )
                     }
@@ -191,9 +180,9 @@ fun StylesScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(8.dp))
-                        .border(1.dp, DtBorder, RoundedCornerShape(8.dp))
+                        .border(1.dp, palette.border, RoundedCornerShape(8.dp))
                         .testTag("style_card_${style.id}"),
-                    colors = CardDefaults.cardColors(containerColor = DtCardDark)
+                    colors = CardDefaults.cardColors(containerColor = palette.cardDark)
                 ) {
                     Column(
                         modifier = Modifier
@@ -213,12 +202,12 @@ fun StylesScreen(
                                 Icon(
                                     imageVector = Icons.Default.AutoAwesome,
                                     contentDescription = null,
-                                    tint = DtAmberPrimary,
+                                    tint = palette.accentPrimary,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Text(
                                     text = style.name,
-                                    color = DtTextPrimary,
+                                    color = palette.textPrimary,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -226,12 +215,12 @@ fun StylesScreen(
 
                             Box(
                                 modifier = Modifier
-                                    .background(DtAmberDark.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
+                                    .background(palette.accentContainer.copy(alpha = 0.35f), RoundedCornerShape(4.dp))
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 Text(
                                     text = style.category.uppercase(),
-                                    color = DtAmberPrimary,
+                                    color = palette.accentPrimary,
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace
@@ -241,7 +230,7 @@ fun StylesScreen(
 
                         Text(
                             text = style.description,
-                            color = DtTextSecondary,
+                            color = palette.textSecondary,
                             fontSize = 12.sp,
                             lineHeight = 16.sp
                         )
@@ -254,28 +243,28 @@ fun StylesScreen(
                             if (style.params.filmicEnabled) {
                                 Box(
                                     modifier = Modifier
-                                        .background(DtDeepDark, RoundedCornerShape(4.dp))
+                                        .background(palette.deepDark, RoundedCornerShape(4.dp))
                                         .padding(horizontal = 5.dp, vertical = 2.dp)
                                 ) {
-                                    Text("Filmic S-Curve", color = DtTealFilmic, fontSize = 9.sp)
+                                    Text("Filmic S-Curve", color = palette.tealAccent, fontSize = 9.sp)
                                 }
                             }
                             if (style.params.isMonochrome) {
                                 Box(
                                     modifier = Modifier
-                                        .background(DtDeepDark, RoundedCornerShape(4.dp))
+                                        .background(palette.deepDark, RoundedCornerShape(4.dp))
                                         .padding(horizontal = 5.dp, vertical = 2.dp)
                                 ) {
-                                    Text("Monochrome Tri-X", color = Color.White, fontSize = 9.sp)
+                                    Text("Monochrome Tri-X", color = palette.textPrimary, fontSize = 9.sp)
                                 }
                             }
                             if (style.params.splitToningEnabled) {
                                 Box(
                                     modifier = Modifier
-                                        .background(DtDeepDark, RoundedCornerShape(4.dp))
+                                        .background(palette.deepDark, RoundedCornerShape(4.dp))
                                         .padding(horizontal = 5.dp, vertical = 2.dp)
                                 ) {
-                                    Text("Split Toning", color = DtAmberPrimary, fontSize = 9.sp)
+                                    Text("Split Toning", color = palette.accentPrimary, fontSize = 9.sp)
                                 }
                             }
                         }
@@ -303,8 +292,8 @@ fun StylesScreen(
                                     viewModel.setMode(DarktableMode.DARKROOM)
                                 },
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = DtAmberPrimary,
-                                    contentColor = DtDeepDark
+                                    containerColor = palette.accentPrimary,
+                                    contentColor = palette.onAccent
                                 ),
                                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
                                 modifier = Modifier
@@ -330,8 +319,8 @@ fun StylesScreen(
 
         AlertDialog(
             onDismissRequest = { showSaveStyleDialog = false },
-            containerColor = DtPanelDark,
-            titleContentColor = DtTextPrimary,
+            containerColor = palette.panelDark,
+            titleContentColor = palette.textPrimary,
             title = { Text("Save Current Parameters as Style") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -341,12 +330,12 @@ fun StylesScreen(
                         label = { Text("Style Name") },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = DtCardDark,
-                            unfocusedContainerColor = DtCardDark,
-                            focusedBorderColor = DtAmberPrimary,
-                            unfocusedBorderColor = DtBorder,
-                            focusedTextColor = DtTextPrimary,
-                            unfocusedTextColor = DtTextPrimary
+                            focusedContainerColor = palette.cardDark,
+                            unfocusedContainerColor = palette.cardDark,
+                            focusedBorderColor = palette.accentPrimary,
+                            unfocusedBorderColor = palette.border,
+                            focusedTextColor = palette.textPrimary,
+                            unfocusedTextColor = palette.textPrimary
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -356,12 +345,12 @@ fun StylesScreen(
                         onValueChange = { styleDesc = it },
                         label = { Text("Description") },
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = DtCardDark,
-                            unfocusedContainerColor = DtCardDark,
-                            focusedBorderColor = DtAmberPrimary,
-                            unfocusedBorderColor = DtBorder,
-                            focusedTextColor = DtTextPrimary,
-                            unfocusedTextColor = DtTextPrimary
+                            focusedContainerColor = palette.cardDark,
+                            unfocusedContainerColor = palette.cardDark,
+                            focusedBorderColor = palette.accentPrimary,
+                            unfocusedBorderColor = palette.border,
+                            focusedTextColor = palette.textPrimary,
+                            unfocusedTextColor = palette.textPrimary
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -372,12 +361,12 @@ fun StylesScreen(
                         label = { Text("Category") },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = DtCardDark,
-                            unfocusedContainerColor = DtCardDark,
-                            focusedBorderColor = DtAmberPrimary,
-                            unfocusedBorderColor = DtBorder,
-                            focusedTextColor = DtTextPrimary,
-                            unfocusedTextColor = DtTextPrimary
+                            focusedContainerColor = palette.cardDark,
+                            unfocusedContainerColor = palette.cardDark,
+                            focusedBorderColor = palette.accentPrimary,
+                            unfocusedBorderColor = palette.border,
+                            focusedTextColor = palette.textPrimary,
+                            unfocusedTextColor = palette.textPrimary
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -395,7 +384,7 @@ fun StylesScreen(
                             showSaveStyleDialog = false
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = DtAmberPrimary, contentColor = DtDeepDark),
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentPrimary, contentColor = palette.onAccent),
                     enabled = styleName.isNotBlank()
                 ) {
                     Text("SAVE RECIPE", fontWeight = FontWeight.Bold)
@@ -403,7 +392,7 @@ fun StylesScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showSaveStyleDialog = false }) {
-                    Text("CANCEL", color = DtTextSecondary)
+                    Text("CANCEL", color = palette.textSecondary)
                 }
             }
         )

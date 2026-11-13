@@ -3,6 +3,7 @@ package com.example.ui.screens
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,42 +19,39 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.ColorLens
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.ShutterSpeed
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.HistogramView
-import com.example.ui.theme.DtAmberPrimary
-import com.example.ui.theme.DtBorder
-import com.example.ui.theme.DtCardDark
-import com.example.ui.theme.DtDeepDark
-import com.example.ui.theme.DtPanelDark
-import com.example.ui.theme.DtSecondaryBlue
-import com.example.ui.theme.DtTextPrimary
-import com.example.ui.theme.DtTextSecondary
-import com.example.ui.theme.DtTextTertiary
+import com.example.ui.theme.DtThemeColors
 import com.example.viewmodel.DarktableMode
 import com.example.viewmodel.DarktableViewModel
 import java.text.SimpleDateFormat
@@ -65,16 +63,18 @@ fun ExifInspectorScreen(
     viewModel: DarktableViewModel,
     modifier: Modifier = Modifier
 ) {
+    val palette = DtThemeColors.current
     val photo by viewModel.selectedPhoto.collectAsState()
     val histogram by viewModel.currentHistogram.collectAsState()
+    val histogramScale by viewModel.histogramScale.collectAsState()
 
     BackHandler {
         viewModel.setMode(if (photo != null) DarktableMode.DARKROOM else DarktableMode.LIGHTTABLE)
     }
 
     if (photo == null) {
-        Box(modifier = modifier.fillMaxSize().background(DtDeepDark), contentAlignment = Alignment.Center) {
-            Text("No photograph selected", color = DtTextSecondary)
+        Box(modifier = modifier.fillMaxSize().background(palette.deepDark), contentAlignment = Alignment.Center) {
+            Text("No photograph selected", color = palette.textSecondary)
         }
         return
     }
@@ -83,15 +83,25 @@ fun ExifInspectorScreen(
     val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss z", Locale.getDefault())
     val formattedDate = dateFormat.format(Date(currentPhoto.captureDate))
 
+    var xmpPath by remember { mutableStateOf("") }
+    var xmpXml by remember { mutableStateOf("") }
+    var showXmpDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(currentPhoto.id, currentPhoto.history.size, currentPhoto.rating, currentPhoto.colorLabels) {
+        val (path, xml) = viewModel.getXmpSidecarInfo(currentPhoto)
+        xmpPath = path
+        xmpXml = xml
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        containerColor = DtDeepDark,
+        containerColor = palette.deepDark,
         topBar = {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(DtPanelDark)
-                    .border(width = 0.5.dp, color = DtBorder)
+                    .background(palette.panelDark)
+                    .border(width = 0.5.dp, color = palette.border)
                     .padding(horizontal = 8.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -100,20 +110,20 @@ fun ExifInspectorScreen(
                     onClick = { viewModel.setMode(DarktableMode.DARKROOM) },
                     modifier = Modifier.testTag("btn_back_from_exif")
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = DtTextPrimary)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = palette.textPrimary)
                 }
 
                 Column {
                     Text(
                         text = "IMAGE INFORMATION",
-                        color = DtTextPrimary,
+                        color = palette.textPrimary,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp
                     )
                     Text(
                         text = "EXIF & Optical Telemetry Inspector",
-                        color = DtTextTertiary,
+                        color = palette.textTertiary,
                         fontSize = 11.sp
                     )
                 }
@@ -130,13 +140,13 @@ fun ExifInspectorScreen(
         ) {
             // Live Histogram & Gamut Analysis
             Text(
-                text = "TECHNICAL HISTOGRAM & SPECTRAL GAMUT",
-                color = DtTextTertiary,
+                text = "TECHNICAL HISTOGRAM & SPECTRAL GAMUT (${histogramScale.label.uppercase()})",
+                color = palette.textTertiary,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold
             )
-            HistogramView(histogram = histogram)
+            HistogramView(histogram = histogram, histogramScale = histogramScale)
 
             // Camera & Optics Card
             ExifSectionCard(
@@ -183,8 +193,111 @@ fun ExifInspectorScreen(
                 )
             )
 
+            // XMP Sidecar Persistence Card
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .border(1.dp, palette.border, RoundedCornerShape(8.dp)),
+                colors = CardDefaults.cardColors(containerColor = palette.cardDark)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Code,
+                            contentDescription = null,
+                            tint = palette.accentPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "XMP SIDECAR PERSISTENCE",
+                            color = palette.textPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Text(
+                        text = "Sidecar File: ${xmpPath.substringAfterLast("/", xmpPath)}",
+                        color = palette.textPrimary,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "Non-destructive edits, history steps, ratings, and color labels are automatically synced to this .xmp XML sidecar.",
+                        color = palette.textSecondary,
+                        fontSize = 11.sp
+                    )
+                    Button(
+                        onClick = { showXmpDialog = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = palette.accentPrimary,
+                            contentColor = palette.onAccent
+                        ),
+                        modifier = Modifier.testTag("btn_view_xmp_xml")
+                    ) {
+                        Text("VIEW XMP XML", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(20.dp))
         }
+    }
+
+    if (showXmpDialog) {
+        AlertDialog(
+            onDismissRequest = { showXmpDialog = false },
+            containerColor = palette.panelDark,
+            titleContentColor = palette.textPrimary,
+            textContentColor = palette.textSecondary,
+            title = {
+                Text(
+                    text = xmpPath.substringAfterLast("/", "sidecar.xmp"),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            text = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(340.dp)
+                        .background(palette.deepDark, RoundedCornerShape(6.dp))
+                        .border(0.5.dp, palette.border, RoundedCornerShape(6.dp))
+                        .padding(8.dp)
+                        .verticalScroll(rememberScrollState())
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = xmpXml,
+                        color = palette.textPrimary,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        lineHeight = 14.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showXmpDialog = false }) {
+                    Text("CLOSE", color = palette.accentPrimary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
     }
 }
 
@@ -195,12 +308,14 @@ private fun ExifSectionCard(
     entries: List<Pair<String, String>>,
     modifier: Modifier = Modifier
 ) {
+    val palette = DtThemeColors.current
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, DtBorder, RoundedCornerShape(8.dp)),
-        colors = CardDefaults.cardColors(containerColor = DtCardDark)
+            .border(1.dp, palette.border, RoundedCornerShape(8.dp)),
+        colors = CardDefaults.cardColors(containerColor = palette.cardDark)
     ) {
         Column(
             modifier = Modifier
@@ -215,12 +330,12 @@ private fun ExifSectionCard(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = DtAmberPrimary,
+                    tint = palette.accentPrimary,
                     modifier = Modifier.size(16.dp)
                 )
                 Text(
                     text = title,
-                    color = DtTextPrimary,
+                    color = palette.textPrimary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
@@ -237,12 +352,12 @@ private fun ExifSectionCard(
                 ) {
                     Text(
                         text = label,
-                        color = DtTextSecondary,
+                        color = palette.textSecondary,
                         fontSize = 12.sp
                     )
                     Text(
                         text = value,
-                        color = DtTextPrimary,
+                        color = palette.textPrimary,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         fontFamily = FontFamily.Monospace

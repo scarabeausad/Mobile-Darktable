@@ -26,6 +26,7 @@ import com.example.ui.theme.DtLabelGreen
 import com.example.ui.theme.DtLabelPurple
 import com.example.ui.theme.DtLabelRed
 import com.example.ui.theme.DtLabelYellow
+import com.example.ui.theme.DtThemeColors
 
 val COLOR_LABEL_MAP = listOf(
     ColorLabel.RED to DtLabelRed,
@@ -44,6 +45,8 @@ fun ColorLabelMultiSelector(
     spacing: Int = 6,
     showCheckMark: Boolean = false
 ) {
+    val palette = DtThemeColors.current
+
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
@@ -58,7 +61,7 @@ fun ColorLabelMultiSelector(
                     .background(color)
                     .border(
                         width = if (isSelected) 2.dp else 0.dp,
-                        color = if (isSelected) Color.White else Color.Transparent,
+                        color = if (isSelected) palette.textPrimary else Color.Transparent,
                         shape = CircleShape
                     )
                     .clickable { onToggleLabel(label) }

@@ -21,18 +21,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.DtAmberDark
-import com.example.ui.theme.DtAmberPrimary
-import com.example.ui.theme.DtBorder
-import com.example.ui.theme.DtCardDark
-import com.example.ui.theme.DtTextPrimary
-import com.example.ui.theme.DtTextSecondary
+import com.example.ui.theme.DtThemeColors
 
 @Composable
 fun ParameterSlider(
@@ -44,8 +39,11 @@ fun ParameterSlider(
     displayDecimals: Int = 0,
     testTagKey: String = "",
     onValueChange: (Float) -> Unit,
+    onValueChangeFinished: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val palette = DtThemeColors.current
+
     val formattedValue = when (displayDecimals) {
         0 -> "${if (value > 0 && defaultValue == 0f) "+" else ""}${value.toInt()}$unit"
         1 -> "${if (value > 0 && defaultValue == 0f) "+" else ""}${"%.1f".format(value)}$unit"
@@ -58,7 +56,7 @@ fun ParameterSlider(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
+            .padding(vertical = 3.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -67,39 +65,42 @@ fun ParameterSlider(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier.weight(1f)
             ) {
                 Text(
                     text = label,
-                    color = if (isModified) DtTextPrimary else DtTextSecondary,
-                    fontSize = 13.sp,
-                    fontWeight = if (isModified) FontWeight.SemiBold else FontWeight.Normal
+                    color = if (isModified) palette.textPrimary else palette.textSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = if (isModified) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 if (isModified) {
                     Box(
                         modifier = Modifier
                             .size(5.dp)
-                            .background(DtAmberPrimary, CircleShape)
+                            .background(palette.accentPrimary, CircleShape)
                     )
                 }
             }
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Box(
                     modifier = Modifier
                         .background(
-                            if (isModified) DtAmberDark.copy(alpha = 0.35f) else DtCardDark,
+                            if (isModified) palette.accentContainer.copy(alpha = 0.35f) else palette.cardDark,
                             RoundedCornerShape(4.dp)
                         )
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
                 ) {
                     Text(
                         text = formattedValue,
-                        color = if (isModified) DtAmberPrimary else DtTextSecondary,
-                        fontSize = 12.sp,
+                        color = if (isModified) palette.accentPrimary else palette.textSecondary,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -108,17 +109,20 @@ fun ParameterSlider(
                 if (isModified) {
                     Box(
                         modifier = Modifier
-                            .size(26.dp)
+                            .size(24.dp)
                             .clip(CircleShape)
-                            .background(DtBorder.copy(alpha = 0.5f))
-                            .clickable { onValueChange(defaultValue) },
+                            .background(palette.border.copy(alpha = 0.5f))
+                            .clickable {
+                                onValueChange(defaultValue)
+                                onValueChangeFinished?.invoke()
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "Reset $label",
-                            tint = DtTextSecondary,
-                            modifier = Modifier.size(14.dp)
+                            tint = palette.textSecondary,
+                            modifier = Modifier.size(13.dp)
                         )
                     }
                 }
@@ -128,11 +132,12 @@ fun ParameterSlider(
         Slider(
             value = value,
             onValueChange = onValueChange,
+            onValueChangeFinished = onValueChangeFinished,
             valueRange = range,
             colors = SliderDefaults.colors(
-                thumbColor = DtAmberPrimary,
-                activeTrackColor = DtAmberPrimary,
-                inactiveTrackColor = DtBorder
+                thumbColor = palette.accentPrimary,
+                activeTrackColor = palette.accentPrimary,
+                inactiveTrackColor = palette.border
             ),
             modifier = Modifier
                 .fillMaxWidth()
