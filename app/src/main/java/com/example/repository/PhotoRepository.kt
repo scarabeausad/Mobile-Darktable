@@ -68,6 +68,7 @@ class PhotoRepository(
 
         // Seed sample photos only if photos table is empty (preserves user edits & imports across restarts)
         if (dao.getPhotoCount() == 0) {
+            val baseTimestamp = System.currentTimeMillis()
             val sampleLake = PhotoItem(
                 id = "sample_lake_01",
                 uriString = "res://sample_mountain_lake",
@@ -83,6 +84,7 @@ class PhotoRepository(
                 iso = 100,
                 exposureBias = "+0.3 EV",
                 colorSpace = "Linear Rec.2020",
+                captureDate = baseTimestamp,
                 rating = 5,
                 colorLabels = setOf(ColorLabel.BLUE),
                 tags = listOf("Landscape", "Golden Hour", "Mountains", "Lake"),
@@ -112,6 +114,7 @@ class PhotoRepository(
                 iso = 800,
                 exposureBias = "-0.7 EV",
                 colorSpace = "Linear Rec.2020",
+                captureDate = baseTimestamp - 60_000L,
                 rating = 4,
                 colorLabels = setOf(ColorLabel.PURPLE, ColorLabel.BLUE),
                 tags = listOf("Street", "Night", "Neon", "Rain"),
@@ -140,6 +143,7 @@ class PhotoRepository(
                 iso = 64,
                 exposureBias = "+0.0 EV",
                 colorSpace = "Hasselblad Natural Color",
+                captureDate = baseTimestamp - 120_000L,
                 rating = 3,
                 colorLabels = setOf(ColorLabel.YELLOW),
                 tags = listOf("Portrait", "Studio", "Editorial", "Natural Light"),
@@ -168,6 +172,7 @@ class PhotoRepository(
                 iso = 200,
                 exposureBias = "-0.3 EV",
                 colorSpace = "Linear Rec.2020",
+                captureDate = baseTimestamp - 180_000L,
                 rating = 3,
                 colorLabels = setOf(ColorLabel.RED, ColorLabel.YELLOW),
                 tags = listOf("Desert", "Minimalist", "Fine Art", "Texture"),

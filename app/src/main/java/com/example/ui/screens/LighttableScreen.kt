@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -52,12 +53,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -583,8 +586,17 @@ fun LighttableScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(photos, key = { it.id }) { photo ->
+                    val editedBitmap by produceState(
+                        initialValue = viewModel.getCachedEditedThumbnail(photo),
+                        photo.id,
+                        photo.uriString,
+                        photo.params
+                    ) {
+                        value = viewModel.getOrRenderEditedThumbnail(photo)
+                    }
                     PhotoGridCard(
                         photo = photo,
+                        editedBitmap = editedBitmap,
                         onOpen = { viewModel.selectPhoto(photo, navigateToDarkroom = true) },
                         onLongClick = { contextMenuPhoto = photo },
                         onRatingChange = { rating -> viewModel.updateRating(photo, rating) },
@@ -655,10 +667,17 @@ fun PhotoGridCard(
     onRatingChange: (Int) -> Unit,
     onRejectToggle: () -> Unit,
     onToggleColorLabel: (ColorLabel) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    editedBitmap: Bitmap? = null
 ) {
     val context = LocalContext.current
     val palette = DtThemeColors.current
+    val hasGeometryFraming = photo.params.rotationAngle != 0f ||
+        photo.params.cropAspectRatio != "Original" ||
+        photo.params.cropLeft > 0.001f ||
+        photo.params.cropTop > 0.001f ||
+        photo.params.cropRight < 0.999f ||
+        photo.params.cropBottom < 0.999f
 
     Card(
         modifier = modifier
@@ -681,9 +700,21 @@ fun PhotoGridCard(
                     .height(170.dp)
                     .background(palette.surfaceDark)
             ) {
-                if (photo.uriString.startsWith("res://")) {
+                if (editedBitmap != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = editedBitmap.asImageBitmap(),
+                        contentDescription = photo.title,
+                        contentScale = if (hasGeometryFraming) ContentScale.Fit else ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("photo_edited_thumbnail_${photo.id}")
+                    )
+                } else if (photo.uriString.startsWith("res://")) {
                     val resName = photo.uriString.removePrefix("res://")
-                    val resId = context.resources.getIdentifier(resName, "drawable", context.packageName)
+                    var resId = context.resources.getIdentifier(resName, "drawable", context.packageName)
+                    if (resId == 0) {
+                        resId = context.resources.getIdentifier(resName, "drawable", "com.example")
+                    }
                     if (resId != 0) {
                         androidx.compose.foundation.Image(
                             painter = painterResource(id = resId),

@@ -429,7 +429,10 @@ object DarktableEngine {
             try {
                 if (uriString.startsWith("res://")) {
                     val resName = uriString.removePrefix("res://")
-                    val resId = context.resources.getIdentifier(resName, "drawable", context.packageName)
+                    var resId = context.resources.getIdentifier(resName, "drawable", context.packageName)
+                    if (resId == 0) {
+                        resId = context.resources.getIdentifier(resName, "drawable", "com.example")
+                    }
                     if (resId != 0) {
                         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                         BitmapFactory.decodeResource(context.resources, resId, options)

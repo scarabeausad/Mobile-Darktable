@@ -17,16 +17,30 @@ abstract class DarktableDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: DarktableDatabase? = null
 
+        @Volatile
+        private var INSTANCE_APP_CONTEXT: Context? = null
+
         fun getDatabase(context: Context): DarktableDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    DarktableDatabase::class.java,
-                    "darktable_database"
-                ).fallbackToDestructiveMigration()
-                    .build()
-                INSTANCE = instance
-                instance
+            val appCtx = context.applicationContext
+            val existing = INSTANCE
+            if (existing != null && INSTANCE_APP_CONTEXT === appCtx) {
+                return existing
+            }
+            return synchronized(this) {
+                val current = INSTANCE
+                if (current != null && INSTANCE_APP_CONTEXT === appCtx) {
+                    current
+                } else {
+                    val instance = Room.databaseBuilder(
+                        appCtx,
+                        DarktableDatabase::class.java,
+                        "darktable_database"
+                    ).fallbackToDestructiveMigration(dropAllTables = true)
+                        .build()
+                    INSTANCE = instance
+                    INSTANCE_APP_CONTEXT = appCtx
+                    instance
+                }
             }
         }
     }

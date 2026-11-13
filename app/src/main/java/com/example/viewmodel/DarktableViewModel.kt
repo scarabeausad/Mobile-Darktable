@@ -3,6 +3,7 @@ package com.example.viewmodel
 import android.app.Application
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.LruCache
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.db.DarktableDatabase
@@ -128,6 +129,9 @@ class DarktableViewModel(application: Application) : AndroidViewModel(applicatio
 
     private var loadJob: Job? = null
 
+    private val rawThumbProxyCache = LruCache<String, Bitmap>(24)
+    private val editedThumbCache = LruCache<String, Bitmap>(48)
+
     val rawPhotos = repository.allPhotos
     val styles = repository.allStyles.stateIn(
         viewModelScope,
@@ -244,10 +248,47 @@ class DarktableViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setMode(mode: DarktableMode) {
+        if (mode == DarktableMode.LIGHTTABLE && _currentMode.value == DarktableMode.DARKROOM) {
+            val selected = _selectedPhoto.value
+            val active = _activeParams.value
+            if (selected != null && active != selected.params) {
+                commitParamChange(active, "Darkroom Adjustment", "Updated parameters")
+            }
+        }
         if (mode != DarktableMode.SETTINGS) {
             previousNonSettingsMode = mode
         }
         _currentMode.value = mode
+    }
+
+    fun getCachedEditedThumbnail(photo: PhotoItem): Bitmap? {
+        val key = "${photo.uriString}#${photo.params}"
+        return synchronized(editedThumbCache) { editedThumbCache.get(key) }
+    }
+
+    suspend fun getOrRenderEditedThumbnail(photo: PhotoItem): Bitmap? {
+        val key = "${photo.uriString}#${photo.params}"
+        synchronized(editedThumbCache) {
+            editedThumbCache.get(key)?.let { return it }
+        }
+        val proxy = synchronized(rawThumbProxyCache) { rawThumbProxyCache.get(photo.uriString) }
+            ?: DarktableEngine.loadBitmap(getApplication(), photo.uriString, 420)?.let { loaded ->
+                val scaled = DarktableEngine.createPreviewProxy(loaded, 420)
+                if (scaled !== loaded) loaded.recycle()
+                synchronized(rawThumbProxyCache) { rawThumbProxyCache.put(photo.uriString, scaled) }
+                scaled
+            }
+            ?: return null
+
+        val rendered = DarktableEngine.renderPreviewBitmap(
+            proxyBitmap = proxy,
+            params = photo.params,
+            applyCrop = true
+        )
+        synchronized(editedThumbCache) {
+            editedThumbCache.put(key, rendered)
+        }
+        return rendered
     }
 
     fun openSettings() {
@@ -377,18 +418,26 @@ class DarktableViewModel(application: Application) : AndroidViewModel(applicatio
     fun commitParamChange(newParams: EditParams, moduleName: String, description: String) {
         _activeParams.value = newParams
         val photo = _selectedPhoto.value ?: return
+        _selectedPhoto.value = photo.copy(params = newParams)
         viewModelScope.launch {
-            val updated = repository.updateParams(photo, newParams, moduleName, description)
-            _selectedPhoto.value = updated
+            val latest = repository.getPhotoById(photo.id) ?: photo
+            val updated = repository.updateParams(latest, newParams, moduleName, description)
+            if (_selectedPhoto.value?.id == updated.id) {
+                _selectedPhoto.value = updated
+            }
         }
     }
 
     fun commitCurrentParams(moduleName: String, descriptionBuilder: (EditParams) -> String) {
         val current = _activeParams.value
         val photo = _selectedPhoto.value ?: return
+        _selectedPhoto.value = photo.copy(params = current)
         viewModelScope.launch {
-            val updated = repository.updateParams(photo, current, moduleName, descriptionBuilder(current))
-            _selectedPhoto.value = updated
+            val latest = repository.getPhotoById(photo.id) ?: photo
+            val updated = repository.updateParams(latest, current, moduleName, descriptionBuilder(current))
+            if (_selectedPhoto.value?.id == updated.id) {
+                _selectedPhoto.value = updated
+            }
         }
     }
 

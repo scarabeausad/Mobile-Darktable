@@ -338,6 +338,87 @@ class ExampleRobolectricTest {
         }
         composeTestRule.onNodeWithTag("histogram_view_logarithmic").performScrollTo().assertIsDisplayed()
     }
+
+    @Test
+    fun `edited thumbnail pipeline applies monochrome and crop for overview cards`() = kotlinx.coroutines.runBlocking {
+        val loadedSample = DarktableEngine.loadBitmap(
+            ApplicationProvider.getApplicationContext(),
+            "res://sample_mountain_lake",
+            420
+        )
+        assertTrue("Sample drawable must decode cleanly", loadedSample != null && loadedSample.width > 0)
+
+        val vm = com.example.viewmodel.DarktableViewModel(ApplicationProvider.getApplicationContext())
+        val vmPhoto = PhotoItem(
+            id = "sample_lake_01",
+            uriString = "res://sample_mountain_lake",
+            title = "Test Lake",
+            params = EditParams(isMonochrome = true, cropAspectRatio = "1:1")
+        )
+        val vmRendered = vm.getOrRenderEditedThumbnail(vmPhoto)
+        assertTrue(
+            "ViewModel getOrRenderEditedThumbnail must succeed (loaded=${loadedSample!!.width}x${loadedSample.height})",
+            vmRendered != null && vmRendered.width > 0 && vmRendered.height > 0
+        )
+
+        val renderedSample = DarktableEngine.renderPreviewBitmap(loadedSample, EditParams(isMonochrome = true, cropAspectRatio = "1:1"), applyCrop = true)
+        assertTrue("Rendered sample thumbnail must be valid", renderedSample.width > 0 && renderedSample.height > 0)
+
+        val src = android.graphics.Bitmap.createBitmap(200, 100, android.graphics.Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.rgb(220, 40, 20))
+        }
+        val params = EditParams(
+            isMonochrome = true,
+            cropAspectRatio = "1:1",
+            cropLeft = 0.25f,
+            cropTop = 0f,
+            cropRight = 0.75f,
+            cropBottom = 1f
+        )
+
+        val thumb = DarktableEngine.renderPreviewBitmap(src, params, applyCrop = true)
+        assertEquals(100, thumb.width)
+        assertEquals(100, thumb.height)
+
+        val centerPixel = thumb.getPixel(50, 50)
+        val r = android.graphics.Color.red(centerPixel)
+        val g = android.graphics.Color.green(centerPixel)
+        val b = android.graphics.Color.blue(centerPixel)
+        assertEquals("Monochrome edit must desaturate pixel channels equally", r, g)
+        assertEquals("Monochrome edit must desaturate pixel channels equally", g, b)
+    }
+
+    @Test
+    fun `edits applied in darkroom render edited thumbnail on lighttable overview`() {
+        composeTestRule.waitUntil(timeoutMillis = 5000) {
+            composeTestRule.onAllNodesWithTag("photo_card_sample_lake_01")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("photo_card_sample_lake_01").performClick()
+        composeTestRule.waitUntil(timeoutMillis = 5000) {
+            composeTestRule.onAllNodesWithTag("tab_geometry")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // Apply a 1:1 crop in Darkroom
+        composeTestRule.onNodeWithTag("tab_geometry").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("crop_ratio_1_1").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        // Return to Lighttable overview
+        composeTestRule.onNodeWithTag("btn_back_to_lighttable").performClick()
+        composeTestRule.waitUntil(timeoutMillis = 5000) {
+            composeTestRule.onAllNodesWithTag("photo_card_sample_lake_01")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.waitUntil(timeoutMillis = 10000) {
+            composeTestRule.onAllNodesWithTag("photo_edited_thumbnail_sample_lake_01", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("photo_edited_thumbnail_sample_lake_01", useUnmergedTree = true)
+            .assertIsDisplayed()
+    }
 }
 
 
