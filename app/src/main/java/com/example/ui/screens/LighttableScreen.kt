@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,14 +26,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -58,6 +67,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -73,14 +83,21 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.model.ColorFilterMode
 import com.example.model.ColorLabel
+import com.example.model.EditParams
 import com.example.model.PhotoItem
+import com.example.model.RATING_REJECTED
 import com.example.model.RatingComparator
+import com.example.model.SortDirection
+import com.example.model.SortField
 import com.example.ui.components.ColorLabelDisplayBadges
 import com.example.ui.components.ColorLabelMultiSelector
 import com.example.ui.components.RatingBar
 import com.example.ui.theme.DtLabelRed
 import com.example.ui.theme.DtThemeColors
 import com.example.viewmodel.DarktableViewModel
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,15 +113,45 @@ fun LighttableScreen(
     val colorFilterMode by viewModel.colorFilterMode.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val gridColumns by viewModel.gridColumns.collectAsState()
+    val sortField by viewModel.sortField.collectAsState()
+    val sortDirection by viewModel.sortDirection.collectAsState()
 
     var showSearchRow by remember { mutableStateOf(false) }
+    var showImportDialog by remember { mutableStateOf(false) }
     var contextMenuPhoto by remember { mutableStateOf<PhotoItem?>(null) }
+    var pendingXmpTargetPhoto by remember { mutableStateOf<PhotoItem?>(null) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
             viewModel.importPhoto(uri)
+        }
+    }
+
+    val multiFileImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            viewModel.importFromMultipleUris(uris)
+        }
+    }
+
+    val folderImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { treeUri: Uri? ->
+        if (treeUri != null) {
+            viewModel.importFromFolderTree(treeUri)
+        }
+    }
+
+    val loadXmpForPhotoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { xmpUri: Uri? ->
+        val target = pendingXmpTargetPhoto
+        pendingXmpTargetPhoto = null
+        if (target != null && xmpUri != null) {
+            viewModel.applyXmpToPhoto(target, xmpUri)
         }
     }
 
@@ -122,7 +169,7 @@ fun LighttableScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -154,6 +201,7 @@ fun LighttableScreen(
                                     text = "DARKTABLE",
                                     color = palette.textPrimary,
                                     fontSize = 16.sp,
+                                    lineHeight = 18.sp,
                                     fontWeight = FontWeight.Black,
                                     letterSpacing = 1.sp,
                                     maxLines = 1
@@ -167,6 +215,7 @@ fun LighttableScreen(
                                         text = "LIGHTTABLE",
                                         color = palette.accentPrimary,
                                         fontSize = 9.sp,
+                                        lineHeight = 11.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
@@ -174,7 +223,8 @@ fun LighttableScreen(
                             Text(
                                 text = "${photos.size} photograph${if (photos.size == 1) "" else "s"}",
                                 color = palette.textTertiary,
-                                fontSize = 11.sp
+                                fontSize = 11.sp,
+                                lineHeight = 13.sp
                             )
                         }
                     }
@@ -260,157 +310,156 @@ fun LighttableScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 12.dp, vertical = 3.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        // Star Rating Selection & Comparator Controls
+                        // Comparator Mode Button (Exact =, At most ≤, At least ≥)
+                        val hasActiveRating = ratingFilter != null
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (hasActiveRating) palette.accentContainer.copy(alpha = 0.4f) else palette.cardDark)
+                                .border(
+                                    width = if (hasActiveRating) 1.dp else 0.5.dp,
+                                    color = if (hasActiveRating) palette.accentPrimary else palette.border,
+                                    shape = RoundedCornerShape(4.dp)
+                                )
+                                .clickable { viewModel.cycleRatingComparator() }
+                                .padding(horizontal = 6.dp, vertical = 4.dp)
+                                .testTag("btn_cycle_rating_comparator"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Text(
+                                text = ratingComparator.symbol,
+                                color = if (hasActiveRating) palette.accentPrimary else palette.textPrimary,
+                                fontSize = 13.sp,
+                                lineHeight = 15.sp,
+                                fontWeight = FontWeight.Black,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Text(
+                                text = ratingComparator.label,
+                                color = if (hasActiveRating) palette.accentPrimary else palette.textSecondary,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Icon(
+                                imageVector = Icons.Default.SwapVert,
+                                contentDescription = "Cycle comparison mode",
+                                tint = if (hasActiveRating) palette.accentPrimary else palette.textTertiary,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(2.dp))
+
+                        // ALL Button
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (ratingFilter == null) palette.accentPrimary else palette.cardDark)
+                                .border(0.5.dp, if (ratingFilter == null) palette.accentPrimary else palette.border, RoundedCornerShape(4.dp))
+                                .clickable { viewModel.setRatingFilter(null) }
+                                .padding(horizontal = 7.dp, vertical = 4.dp)
+                                .testTag("filter_stars_all")
+                        ) {
+                            Text(
+                                text = "ALL",
+                                color = if (ratingFilter == null) palette.onAccent else palette.textSecondary,
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        // REJECTED Selection Button
+                        val isRejectedFilterActive = ratingFilter == RATING_REJECTED
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (isRejectedFilterActive) DtLabelRed else palette.cardDark)
+                                .border(
+                                    width = 0.5.dp,
+                                    color = if (isRejectedFilterActive) DtLabelRed else palette.border,
+                                    shape = RoundedCornerShape(4.dp)
+                                )
+                                .clickable {
+                                    if (isRejectedFilterActive) {
+                                        viewModel.setRatingFilter(null)
+                                    } else {
+                                        viewModel.setRatingFilter(RATING_REJECTED)
+                                    }
+                                }
+                                .padding(horizontal = 6.dp, vertical = 4.dp)
+                                .testTag("filter_rejected")
                         ) {
-                            // Comparator Mode Button (Exact =, At most ≤, At least ≥)
-                            val hasActiveRating = ratingFilter != null
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Filter rejected photos",
+                                tint = if (isRejectedFilterActive) Color.White else DtLabelRed,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Text(
+                                text = "REJ",
+                                color = if (isRejectedFilterActive) Color.White else palette.textSecondary,
+                                fontSize = 10.sp,
+                                lineHeight = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        // 0★ to 5★ Buttons
+                        for (stars in 0..5) {
+                            val active = ratingFilter == stars
                             Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
-                                    .background(if (hasActiveRating) palette.accentContainer.copy(alpha = 0.4f) else palette.cardDark)
-                                    .border(
-                                        width = if (hasActiveRating) 1.dp else 0.5.dp,
-                                        color = if (hasActiveRating) palette.accentPrimary else palette.border,
-                                        shape = RoundedCornerShape(4.dp)
-                                    )
-                                    .clickable { viewModel.cycleRatingComparator() }
-                                    .padding(horizontal = 6.dp, vertical = 4.dp)
-                                    .testTag("btn_cycle_rating_comparator"),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    .background(if (active) palette.accentPrimary else palette.cardDark)
+                                    .border(0.5.dp, if (active) palette.accentPrimary else palette.border, RoundedCornerShape(4.dp))
+                                    .clickable {
+                                        if (active) viewModel.setRatingFilter(null) else viewModel.setRatingFilter(stars)
+                                    }
+                                    .padding(horizontal = 5.dp, vertical = 4.dp)
+                                    .testTag("filter_stars_$stars")
                             ) {
                                 Text(
-                                    text = ratingComparator.symbol,
-                                    color = if (hasActiveRating) palette.accentPrimary else palette.textPrimary,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Black,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                                Text(
-                                    text = ratingComparator.label,
-                                    color = if (hasActiveRating) palette.accentPrimary else palette.textSecondary,
-                                    fontSize = 10.sp,
+                                    text = "$stars",
+                                    color = if (active) palette.onAccent else palette.textPrimary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 14.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Icon(
-                                    imageVector = Icons.Default.SwapVert,
-                                    contentDescription = "Cycle comparison mode",
-                                    tint = if (hasActiveRating) palette.accentPrimary else palette.textTertiary,
-                                    modifier = Modifier.size(12.dp)
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = "$stars stars",
+                                    tint = if (active) palette.onAccent else if (stars == 0) palette.textTertiary else palette.accentPrimary,
+                                    modifier = Modifier.size(10.dp)
                                 )
-                            }
-
-                            Spacer(modifier = Modifier.width(2.dp))
-
-                            // ALL Button
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (ratingFilter == null) palette.accentPrimary else palette.cardDark)
-                                    .border(0.5.dp, if (ratingFilter == null) palette.accentPrimary else palette.border, RoundedCornerShape(4.dp))
-                                    .clickable { viewModel.setRatingFilter(null) }
-                                    .padding(horizontal = 7.dp, vertical = 5.dp)
-                                    .testTag("filter_stars_all")
-                            ) {
-                                Text(
-                                    text = "ALL",
-                                    color = if (ratingFilter == null) palette.onAccent else palette.textSecondary,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            // 0★ to 5★ Buttons
-                            for (stars in 0..5) {
-                                val active = ratingFilter == stars
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(if (active) palette.accentPrimary else palette.cardDark)
-                                        .border(0.5.dp, if (active) palette.accentPrimary else palette.border, RoundedCornerShape(4.dp))
-                                        .clickable {
-                                            if (active) viewModel.setRatingFilter(null) else viewModel.setRatingFilter(stars)
-                                        }
-                                        .padding(horizontal = 5.dp, vertical = 5.dp)
-                                        .testTag("filter_stars_$stars")
-                                ) {
-                                    Text(
-                                        text = "$stars",
-                                        color = if (active) palette.onAccent else palette.textPrimary,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Default.Star,
-                                        contentDescription = "$stars stars",
-                                        tint = if (active) palette.onAccent else if (stars == 0) palette.textTertiary else palette.accentPrimary,
-                                        modifier = Modifier.size(10.dp)
-                                    )
-                                }
                             }
                         }
                     }
 
-                    // FILTER BAR ROW 2: Color Tag Multi-Selection & Mode Toggle
+                    // FILTER BAR ROW 2: Mode Toggle on Left & Color Tag Multi-Selection on Right (matching Star Rating layout)
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        // Color Tag Multi-Selector Dots
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = "TAGS:",
-                                color = palette.textTertiary,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-
-                            ColorLabelMultiSelector(
-                                selectedLabels = selectedColorLabels,
-                                onToggleLabel = { label -> viewModel.toggleColorFilter(label) },
-                                dotSize = 18,
-                                spacing = 6,
-                                showCheckMark = true
-                            )
-
-                            if (selectedColorLabels.isNotEmpty()) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(palette.cardDark)
-                                        .border(0.5.dp, palette.border, RoundedCornerShape(4.dp))
-                                        .clickable { viewModel.clearColorFilter() }
-                                        .padding(horizontal = 6.dp, vertical = 3.dp)
-                                        .testTag("btn_clear_color_filter")
-                                ) {
-                                    Text(
-                                        text = "CLEAR",
-                                        color = palette.textSecondary,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-
-                        // Color Filter Mode Toggle Button ("At least one" vs "Only selected")
+                        // Color Filter Mode Toggle Button ("At least one" vs "Only selected") on the LEFT
                         Row(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
@@ -432,6 +481,7 @@ fun LighttableScreen(
                                 text = "MODE:",
                                 color = if (selectedColorLabels.isNotEmpty()) palette.accentPrimary else palette.textTertiary,
                                 fontSize = 9.sp,
+                                lineHeight = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.Monospace
                             )
@@ -439,8 +489,136 @@ fun LighttableScreen(
                                 text = colorFilterMode.label,
                                 color = if (selectedColorLabels.isNotEmpty()) palette.textPrimary else palette.textSecondary,
                                 fontSize = 10.sp,
+                                lineHeight = 13.sp,
                                 fontWeight = FontWeight.Bold
                             )
+                        }
+
+                        Spacer(modifier = Modifier.width(2.dp))
+
+                        // Color Tag Multi-Selector Dots on the RIGHT
+                        ColorLabelMultiSelector(
+                            selectedLabels = selectedColorLabels,
+                            onToggleLabel = { label -> viewModel.toggleColorFilter(label) },
+                            modifier = Modifier.testTag("filter_color_labels"),
+                            dotSize = 18,
+                            spacing = 6,
+                            showCheckMark = true
+                        )
+
+                        if (selectedColorLabels.isNotEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(palette.cardDark)
+                                    .border(0.5.dp, palette.border, RoundedCornerShape(4.dp))
+                                    .clickable { viewModel.clearColorFilter() }
+                                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                                    .testTag("btn_clear_color_filter")
+                            ) {
+                                Text(
+                                    text = "CLEAR",
+                                    color = palette.textSecondary,
+                                    fontSize = 9.sp,
+                                    lineHeight = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    // SORT BAR ROW 3: Direction Toggle on Left & Sort Fields (EXIF Date, Filename, Star Rating) on Right
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(palette.cardDark)
+                                .border(
+                                    width = 0.5.dp,
+                                    color = palette.border,
+                                    shape = RoundedCornerShape(4.dp)
+                                )
+                                .clickable { viewModel.toggleSortDirection() }
+                                .padding(horizontal = 7.dp, vertical = 4.dp)
+                                .testTag("btn_toggle_sort_direction"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Text(
+                                text = "SORT:",
+                                color = palette.accentPrimary,
+                                fontSize = 9.sp,
+                                lineHeight = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Icon(
+                                imageVector = if (sortDirection == SortDirection.ASCENDING) {
+                                    Icons.Default.ArrowUpward
+                                } else {
+                                    Icons.Default.ArrowDownward
+                                },
+                                contentDescription = "Toggle sort direction (${sortDirection.label})",
+                                tint = palette.accentPrimary,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Text(
+                                text = sortDirection.shortLabel,
+                                color = palette.textPrimary,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(2.dp))
+
+                        SortField.entries.forEach { field ->
+                            val selected = sortField == field
+                            val fieldTag = when (field) {
+                                SortField.CAPTURE_DATE -> "sort_field_capture_date"
+                                SortField.FILENAME -> "sort_field_filename"
+                                SortField.STAR_RATING -> "sort_field_star_rating"
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (selected) palette.accentPrimary else palette.cardDark)
+                                    .border(
+                                        width = 0.5.dp,
+                                        color = if (selected) palette.accentPrimary else palette.border,
+                                        shape = RoundedCornerShape(4.dp)
+                                    )
+                                    .clickable { viewModel.setSortField(field) }
+                                    .padding(horizontal = 7.dp, vertical = 4.dp)
+                                    .testTag(fieldTag)
+                            ) {
+                                Text(
+                                    text = field.shortLabel,
+                                    color = if (selected) palette.onAccent else palette.textSecondary,
+                                    fontSize = 10.sp,
+                                    lineHeight = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (selected) {
+                                    Text(
+                                        text = sortDirection.symbol,
+                                        color = palette.onAccent,
+                                        fontSize = 10.sp,
+                                        lineHeight = 13.sp,
+                                        fontWeight = FontWeight.Black,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -468,14 +646,15 @@ fun LighttableScreen(
                                 )
 
                                 if (ratingFilter != null) {
+                                    val ratingLabel = if (ratingFilter == RATING_REJECTED) "Rejected" else "${ratingFilter}★"
                                     val ratingDesc = when (ratingComparator) {
-                                        RatingComparator.EXACT -> "$ratingFilter★ only"
-                                        RatingComparator.LESS_EQUAL -> "$ratingFilter★ and less"
-                                        RatingComparator.GREATER_EQUAL -> "$ratingFilter★ and more"
+                                        RatingComparator.EXACT -> "$ratingLabel only"
+                                        RatingComparator.LESS_EQUAL -> "$ratingLabel and less"
+                                        RatingComparator.GREATER_EQUAL -> "$ratingLabel and more"
                                     }
                                     Text(
                                         text = "Rating: $ratingDesc",
-                                        color = palette.textPrimary,
+                                        color = if (ratingFilter == RATING_REJECTED) DtLabelRed else palette.textPrimary,
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.SemiBold
                                     )
@@ -518,11 +697,7 @@ fun LighttableScreen(
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = {
-                    photoPickerLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
-                },
+                onClick = { showImportDialog = true },
                 containerColor = palette.accentPrimary,
                 contentColor = palette.onAccent,
                 icon = { Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Import Photo") },
@@ -578,12 +753,14 @@ fun LighttableScreen(
                 contentPadding = PaddingValues(
                     start = 10.dp,
                     end = 10.dp,
-                    top = innerPadding.calculateTopPadding() + 8.dp,
+                    top = innerPadding.calculateTopPadding() + 4.dp,
                     bottom = innerPadding.calculateBottomPadding() + 80.dp
                 ),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("lighttable_photo_grid")
             ) {
                 items(photos, key = { it.id }) { photo ->
                     val editedBitmap by produceState(
@@ -608,29 +785,242 @@ fun LighttableScreen(
         }
     }
 
+    // Import source selection dialog (supports Image + .XMP files, Folder auto-matching, and Photo Picker)
+    if (showImportDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportDialog = false },
+            containerColor = palette.panelDark,
+            titleContentColor = palette.textPrimary,
+            textContentColor = palette.textSecondary,
+            title = {
+                Text(
+                    text = "IMPORT PHOTOGRAPHY",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Select files with .xmp sidecars or pick a folder to automatically load existing Darktable edits.",
+                        fontSize = 12.sp,
+                        color = palette.textSecondary
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(palette.cardDark)
+                            .border(1.dp, palette.accentPrimary.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                            .clickable {
+                                showImportDialog = false
+                                multiFileImportLauncher.launch(arrayOf("*/*"))
+                            }
+                            .padding(12.dp)
+                            .testTag("btn_import_files_with_xmp"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FolderOpen,
+                            contentDescription = "Select image and XMP files",
+                            tint = palette.accentPrimary
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Files (Image + .XMP)",
+                                color = palette.textPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Pick photo(s) together with their .xmp sidecar",
+                                color = palette.textTertiary,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(palette.cardDark)
+                            .border(1.dp, palette.border, RoundedCornerShape(8.dp))
+                            .clickable {
+                                showImportDialog = false
+                                folderImportLauncher.launch(null)
+                            }
+                            .padding(12.dp)
+                            .testTag("btn_import_folder_xmp"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CreateNewFolder,
+                            contentDescription = "Import folder with XMP sidecars",
+                            tint = palette.secondaryBlue
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Folder (Auto-Match .XMP)",
+                                color = palette.textPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Automatically pair images with sibling .xmp files",
+                                color = palette.textTertiary,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(palette.cardDark)
+                            .border(1.dp, palette.border, RoundedCornerShape(8.dp))
+                            .clickable {
+                                showImportDialog = false
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            }
+                            .padding(12.dp)
+                            .testTag("btn_import_gallery"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PhotoLibrary,
+                            contentDescription = "Quick gallery photo picker",
+                            tint = palette.textSecondary
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Gallery Photo Picker",
+                                color = palette.textPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Quick pick from device gallery (reads embedded XMP)",
+                                color = palette.textTertiary,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showImportDialog = false }) {
+                    Text("CANCEL", color = palette.textSecondary)
+                }
+            }
+        )
+    }
+
     // Long press context menu dialog
     contextMenuPhoto?.let { photo ->
+        val dialogPhoto = photos.find { it.id == photo.id } ?: photo
         AlertDialog(
             onDismissRequest = { contextMenuPhoto = null },
             containerColor = palette.panelDark,
             titleContentColor = palette.textPrimary,
             textContentColor = palette.textSecondary,
             title = {
-                Text(text = photo.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(text = dialogPhoto.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Format: ${photo.fileFormat} • ${photo.dimensions}")
-                    Text("Camera: ${photo.cameraModel}")
-                    Text("Lens: ${photo.lens}")
-                    Text("Exposure: ${photo.aperture} • ${photo.shutterSpeed} • ISO ${photo.iso}")
-                    if (photo.colorLabels.isNotEmpty()) {
-                        Text("Color Tags: ${photo.colorLabels.joinToString { it.name }}")
+                    Text("Format: ${dialogPhoto.fileFormat} • ${dialogPhoto.dimensions}")
+                    Text("Camera: ${dialogPhoto.cameraModel}")
+                    Text("Lens: ${dialogPhoto.lens}")
+                    Text("Exposure: ${dialogPhoto.aperture} • ${dialogPhoto.shutterSpeed} • ISO ${dialogPhoto.iso}")
+                    if (dialogPhoto.colorLabels.isNotEmpty()) {
+                        Text("Color Tags: ${dialogPhoto.colorLabels.joinToString { it.name }}")
+                    }
+
+                    // Rating & Rejected status editor inside context menu
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        RatingBar(
+                            rating = dialogPhoto.rating,
+                            isRejected = dialogPhoto.isRejected,
+                            onRatingChange = { newRating ->
+                                viewModel.updateRating(dialogPhoto, newRating)
+                                contextMenuPhoto = dialogPhoto.copy(rating = newRating, isRejected = false)
+                            },
+                            onRejectToggle = {
+                                viewModel.toggleReject(dialogPhoto)
+                                contextMenuPhoto = dialogPhoto.copy(isRejected = !dialogPhoto.isRejected)
+                            },
+                            starSize = 22
+                        )
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (dialogPhoto.isRejected) DtLabelRed else palette.cardDark)
+                                .border(
+                                    0.5.dp,
+                                    if (dialogPhoto.isRejected) DtLabelRed else palette.border,
+                                    RoundedCornerShape(4.dp)
+                                )
+                                .clickable {
+                                    viewModel.toggleReject(dialogPhoto)
+                                    contextMenuPhoto = dialogPhoto.copy(isRejected = !dialogPhoto.isRejected)
+                                }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .testTag("btn_dialog_toggle_reject")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Toggle rejected status",
+                                tint = if (dialogPhoto.isRejected) Color.White else DtLabelRed,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = if (dialogPhoto.isRejected) "REJECTED" else "MARK REJECTED",
+                                color = if (dialogPhoto.isRejected) Color.White else palette.textSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             },
             confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = {
+                            pendingXmpTargetPhoto = photo
+                            contextMenuPhoto = null
+                            loadXmpForPhotoLauncher.launch(arrayOf("*/*"))
+                        },
+                        modifier = Modifier.testTag("btn_load_xmp_for_photo")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Code,
+                            contentDescription = null,
+                            tint = palette.secondaryBlue,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("LOAD .XMP", color = palette.secondaryBlue)
+                    }
                     TextButton(
                         onClick = {
                             viewModel.duplicatePhoto(photo)
@@ -683,7 +1073,11 @@ fun PhotoGridCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, palette.border, RoundedCornerShape(8.dp))
+            .border(
+                width = if (photo.isRejected) 1.5.dp else 1.dp,
+                color = if (photo.isRejected) DtLabelRed.copy(alpha = 0.75f) else palette.border,
+                shape = RoundedCornerShape(8.dp)
+            )
             .combinedClickable(
                 onClick = onOpen,
                 onLongClick = onLongClick
@@ -697,9 +1091,10 @@ fun PhotoGridCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(170.dp)
+                    .height(92.dp)
                     .background(palette.surfaceDark)
             ) {
+                val thumbAlpha = if (photo.isRejected) 0.6f else 1f
                 if (editedBitmap != null) {
                     androidx.compose.foundation.Image(
                         bitmap = editedBitmap.asImageBitmap(),
@@ -707,6 +1102,7 @@ fun PhotoGridCard(
                         contentScale = if (hasGeometryFraming) ContentScale.Fit else ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxSize()
+                            .alpha(thumbAlpha)
                             .testTag("photo_edited_thumbnail_${photo.id}")
                     )
                 } else if (photo.uriString.startsWith("res://")) {
@@ -720,7 +1116,9 @@ fun PhotoGridCard(
                             painter = painterResource(id = resId),
                             contentDescription = photo.title,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .alpha(thumbAlpha)
                         )
                     }
                 } else {
@@ -728,7 +1126,9 @@ fun PhotoGridCard(
                         model = photo.uriString,
                         contentDescription = photo.title,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .alpha(thumbAlpha)
                     )
                 }
 
@@ -764,21 +1164,45 @@ fun PhotoGridCard(
                     )
                 }
 
-                // If Darktable parameters are applied (edited indicator)
-                if (photo.history.size > 1) {
-                    Box(
+                // Top-Start Status Badges (REJECTED / EDITED)
+                val isEdited = photo.history.size > 1 || photo.params != EditParams()
+                if (photo.isRejected || isEdited) {
+                    Row(
                         modifier = Modifier
                             .align(Alignment.TopStart)
-                            .padding(6.dp)
-                            .background(palette.accentPrimary, RoundedCornerShape(4.dp))
-                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                            .padding(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "EDITED",
-                            color = palette.onAccent,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Black
-                        )
+                        if (photo.isRejected) {
+                            Box(
+                                modifier = Modifier
+                                    .background(DtLabelRed, RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 5.dp, vertical = 2.dp)
+                                    .testTag("badge_rejected_${photo.id}")
+                            ) {
+                                Text(
+                                    text = "REJECTED",
+                                    color = Color.White,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
+                        }
+                        if (isEdited) {
+                            Box(
+                                modifier = Modifier
+                                    .background(palette.accentPrimary, RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 5.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "EDITED",
+                                    color = palette.onAccent,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -787,24 +1211,40 @@ fun PhotoGridCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
                     text = photo.title,
                     color = palette.textPrimary,
                     fontSize = 12.sp,
+                    lineHeight = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
 
+                val captureDateText = remember(photo.captureDate) {
+                    SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(photo.captureDate))
+                }
                 Text(
                     text = "${photo.cameraModel} • ${photo.focalLength} • ${photo.aperture}",
                     color = palette.textSecondary,
                     fontSize = 10.sp,
+                    lineHeight = 13.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
+                )
+
+                Text(
+                    text = captureDateText,
+                    color = palette.textTertiary,
+                    fontSize = 9.sp,
+                    lineHeight = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("photo_capture_date_${photo.id}")
                 )
 
                 // Rating stars and label dots

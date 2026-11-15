@@ -13,6 +13,7 @@ import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
@@ -43,7 +44,9 @@ data class ImportedPhotoInfo(
     val aperture: String,
     val shutterSpeed: String,
     val iso: Int,
-    val fileFormat: String
+    val fileFormat: String,
+    val captureDate: Long = System.currentTimeMillis(),
+    val xmpSidecarData: XmpSidecarData? = null
 )
 
 object DarktableEngine {
@@ -294,19 +297,322 @@ object DarktableEngine {
         )
     }
 
+    private val supportedImageExtensions = setOf(
+        "jpg", "jpeg", "png", "webp", "dng", "arw", "cr2", "cr3",
+        "nef", "orf", "raf", "rw2", "tiff", "tif", "heic", "heif"
+    )
+
+    fun isImageFileName(name: String, mimeType: String? = null): Boolean {
+        if (!mimeType.isNullOrBlank() && mimeType.startsWith("image/", ignoreCase = true)) {
+            return true
+        }
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return ext in supportedImageExtensions
+    }
+
+    fun isXmpFileName(name: String, mimeType: String? = null): Boolean {
+        if (name.endsWith(".xmp", ignoreCase = true)) return true
+        return mimeType.equals("application/rdf+xml", ignoreCase = true)
+    }
+
+    fun queryDisplayName(context: Context, uri: Uri): String? {
+        if (uri.scheme == "file" || uri.scheme == null) {
+            uri.path?.let { path ->
+                val name = File(path).name
+                if (name.isNotBlank()) return name
+            }
+        }
+        try {
+            context.contentResolver.query(
+                uri,
+                arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+                    if (idx >= 0) {
+                        val name = cursor.getString(idx)
+                        if (!name.isNullOrBlank()) return name
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+        val rawLast = uri.lastPathSegment
+            ?.substringAfterLast('/')
+            ?.substringAfterLast(':')
+            ?.takeIf { it.isNotBlank() }
+        return rawLast
+    }
+
+    suspend fun readXmpFromUri(context: Context, xmpUri: Uri): XmpSidecarData? =
+        withContext(Dispatchers.IO) {
+            try {
+                val xml = if (xmpUri.scheme == "file" || xmpUri.scheme == null) {
+                    val path = xmpUri.path ?: return@withContext null
+                    val file = File(path)
+                    if (!file.exists() || !file.isFile) return@withContext null
+                    file.readText(Charsets.UTF_8)
+                } else {
+                    context.contentResolver.openInputStream(xmpUri)?.use { input ->
+                        input.bufferedReader(Charsets.UTF_8).readText()
+                    } ?: return@withContext null
+                }
+                XmpSidecarManager.parseXmpXml(xml)
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+    fun isUriLikelyXmp(context: Context, uri: Uri, displayName: String?, mimeType: String?): Boolean {
+        if (!displayName.isNullOrBlank() && isXmpFileName(displayName, mimeType)) return true
+        if (mimeType.equals("application/rdf+xml", ignoreCase = true)) return true
+        if (mimeType.equals("application/xml", ignoreCase = true) || mimeType.equals("text/xml", ignoreCase = true)) {
+            return true
+        }
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val buf = ByteArray(1024)
+                val read = input.read(buf)
+                if (read > 0) {
+                    val head = String(buf, 0, read, Charsets.UTF_8)
+                    head.contains("<x:xmpmeta", ignoreCase = true) || head.contains("<rdf:RDF", ignoreCase = true)
+                } else false
+            } ?: false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun resolveExternalStorageFile(context: Context, uri: Uri): File? {
+        return try {
+            if (uri.authority != "com.android.externalstorage.documents") return null
+            val docId = if (DocumentsContract.isDocumentUri(context, uri)) {
+                DocumentsContract.getDocumentId(uri)
+            } else {
+                uri.lastPathSegment
+            } ?: return null
+            val parts = docId.split(":", limit = 2)
+            if (parts.size != 2) return null
+            val volume = parts[0]
+            val relPath = parts[1]
+            if (volume.equals("primary", ignoreCase = true)) {
+                @Suppress("DEPRECATION")
+                File(Environment.getExternalStorageDirectory(), relPath)
+            } else {
+                File("/storage/$volume/$relPath")
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    suspend fun findXmpDataForImageUri(
+        context: Context,
+        sourceUri: Uri,
+        copiedImageFile: File? = null,
+        companionXmpUri: Uri? = null,
+        originalDisplayName: String? = null
+    ): XmpSidecarData? = withContext(Dispatchers.IO) {
+        // 1. Explicit companion .xmp URI (e.g. OpenMultipleDocuments or OpenDocumentTree)
+        if (companionXmpUri != null) {
+            readXmpFromUri(context, companionXmpUri)?.let { return@withContext it }
+        }
+
+        // 2. Sibling .xmp file on disk for file:// URIs
+        if (sourceUri.scheme == "file" || sourceUri.scheme == null) {
+            val path = sourceUri.path
+            if (!path.isNullOrBlank()) {
+                val sibling = XmpSidecarManager.findSiblingSidecarFile(File(path))
+                if (sibling != null) {
+                    try {
+                        XmpSidecarManager.parseXmpXml(sibling.readText(Charsets.UTF_8))?.let {
+                            return@withContext it
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        }
+
+        // 3. ExternalStorage DocumentsProvider sibling check (when user picks only the image via Files picker)
+        resolveExternalStorageFile(context, sourceUri)?.let { extFile ->
+            val sibling = XmpSidecarManager.findSiblingSidecarFile(extFile)
+            if (sibling != null) {
+                try {
+                    XmpSidecarManager.parseXmpXml(sibling.readText(Charsets.UTF_8))?.let {
+                        return@withContext it
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        // 4. Legacy/MediaStore DATA column sibling check if readable
+        if (sourceUri.scheme == "content") {
+            try {
+                @Suppress("DEPRECATION")
+                context.contentResolver.query(
+                    sourceUri,
+                    arrayOf(MediaStore.MediaColumns.DATA),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
+                        if (idx >= 0) {
+                            val filePath = cursor.getString(idx)
+                            if (!filePath.isNullOrBlank()) {
+                                val sibling = XmpSidecarManager.findSiblingSidecarFile(File(filePath))
+                                if (sibling != null) {
+                                    XmpSidecarManager.parseXmpXml(sibling.readText(Charsets.UTF_8))?.let {
+                                        return@withContext it
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            }
+
+            // 5. Persisted SAF folder trees previously authorized by the user
+            val imgName = originalDisplayName ?: queryDisplayName(context, sourceUri)
+            if (!imgName.isNullOrBlank()) {
+                try {
+                    val persisted = context.contentResolver.persistedUriPermissions
+                    for (perm in persisted) {
+                        if (!perm.isReadPermission) continue
+                        val treeUri = perm.uri
+                        if (!DocumentsContract.isTreeUri(treeUri)) continue
+                        val pairs = listFolderImagesWithXmp(context, treeUri)
+                        val match = pairs.firstOrNull { (pairImgUri, pairXmpUri) ->
+                            pairXmpUri != null &&
+                                queryDisplayName(context, pairImgUri)?.equals(imgName, ignoreCase = true) == true
+                        }
+                        if (match?.second != null) {
+                            readXmpFromUri(context, match.second!!)?.let { return@withContext it }
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+
+                // 6. MediaStore.Files fallback lookup for matching .xmp sidecar display name
+                try {
+                    val stem = imgName.substringBeforeLast(".")
+                    val ext = imgName.substringAfterLast(".", "")
+                    val candidates = buildList {
+                        add("$imgName.xmp")
+                        add("$stem.xmp")
+                        if (ext.isNotEmpty()) add("${stem}_01.$ext.xmp")
+                    }.distinct()
+                    val filesUri = MediaStore.Files.getContentUri("external")
+                    val placeholders = candidates.joinToString(",") { "?" }
+                    val selection = "${MediaStore.MediaColumns.DISPLAY_NAME} IN ($placeholders)"
+                    context.contentResolver.query(
+                        filesUri,
+                        arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME),
+                        selection,
+                        candidates.toTypedArray(),
+                        null
+                    )?.use { cursor ->
+                        val idCol = cursor.getColumnIndex(MediaStore.MediaColumns._ID)
+                        val nameCol = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+                        val foundMap = mutableMapOf<String, Uri>()
+                        while (cursor.moveToNext()) {
+                            val id = if (idCol >= 0) cursor.getLong(idCol) else continue
+                            val name = if (nameCol >= 0) cursor.getString(nameCol) else continue
+                            foundMap[name] = Uri.withAppendedPath(filesUri, id.toString())
+                        }
+                        val best = XmpSidecarManager.findMatchingXmpName(imgName, foundMap.keys)
+                        val matchedUri = best?.let { foundMap[it] }
+                        if (matchedUri != null) {
+                            readXmpFromUri(context, matchedUri)?.let { return@withContext it }
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        // 7. Embedded XMP metadata inside image file itself
+        if (copiedImageFile != null) {
+            val embeddedXml = XmpSidecarManager.extractEmbeddedXmpXml(copiedImageFile)
+            if (embeddedXml != null) {
+                XmpSidecarManager.parseXmpXml(embeddedXml)?.let { return@withContext it }
+            }
+        }
+
+        null
+    }
+
+    suspend fun listFolderImagesWithXmp(
+        context: Context,
+        treeUri: Uri
+    ): List<Pair<Uri, Uri?>> = withContext(Dispatchers.IO) {
+        val results = mutableListOf<Pair<Uri, Uri?>>()
+        try {
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                DocumentsContract.getTreeDocumentId(treeUri)
+            )
+            val projection = arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE
+            )
+            val images = mutableListOf<Pair<String, Uri>>()
+            val xmps = mutableMapOf<String, Uri>()
+
+            context.contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val mimeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                while (cursor.moveToNext()) {
+                    val docId = cursor.getString(idCol) ?: continue
+                    val name = cursor.getString(nameCol) ?: continue
+                    val mime = cursor.getString(mimeCol) ?: ""
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR) continue
+                    val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+                    when {
+                        isXmpFileName(name, mime) -> xmps[name] = docUri
+                        isImageFileName(name, mime) -> images.add(name to docUri)
+                    }
+                }
+            }
+
+            val xmpNames = xmps.keys
+            for ((imgName, imgUri) in images) {
+                val matchedXmpName = XmpSidecarManager.findMatchingXmpName(imgName, xmpNames)
+                results.add(imgUri to matchedXmpName?.let { xmps[it] })
+            }
+        } catch (_: Exception) {
+        }
+        results
+    }
+
     /**
-     * Copies a picked photo from temporary content:// URI into persistent app internal storage
-     * and extracts EXIF telemetry so the image remains permanently available across app restarts.
+     * Copies a picked photo from temporary content:// or file:// URI into persistent app internal storage,
+     * extracts EXIF telemetry, and loads any matching .xmp sidecar or embedded XMP edits.
      */
-    suspend fun importToInternalStorage(context: Context, sourceUri: Uri): ImportedPhotoInfo? =
+    suspend fun importToInternalStorage(
+        context: Context,
+        sourceUri: Uri,
+        companionXmpUri: Uri? = null
+    ): ImportedPhotoInfo? =
         withContext(Dispatchers.IO) {
             try {
                 val resolver = context.contentResolver
-                val mime = resolver.getType(sourceUri) ?: "image/jpeg"
+                val originalName = queryDisplayName(context, sourceUri)
+                val mime = resolver.getType(sourceUri) ?: ""
+                val extFromName = originalName?.substringAfterLast('.', "")?.lowercase().orEmpty()
                 val ext = when {
-                    mime.contains("png", ignoreCase = true) -> "png"
-                    mime.contains("webp", ignoreCase = true) -> "webp"
-                    mime.contains("dng", ignoreCase = true) -> "dng"
+                    mime.contains("png", ignoreCase = true) || extFromName == "png" -> "png"
+                    mime.contains("webp", ignoreCase = true) || extFromName == "webp" -> "webp"
+                    mime.contains("dng", ignoreCase = true) || extFromName == "dng" -> "dng"
                     else -> "jpg"
                 }
 
@@ -315,7 +621,12 @@ object DarktableEngine {
                 }
                 val destFile = File(importDir, "dt_${UUID.randomUUID()}.$ext")
 
-                resolver.openInputStream(sourceUri)?.use { input ->
+                val inputStream = resolver.openInputStream(sourceUri)
+                    ?: if ((sourceUri.scheme == "file" || sourceUri.scheme == null) && !sourceUri.path.isNullOrBlank()) {
+                        File(sourceUri.path!!).takeIf { it.exists() }?.inputStream()
+                    } else null
+
+                inputStream?.use { input ->
                     FileOutputStream(destFile).use { output ->
                         input.copyTo(output)
                         output.flush()
@@ -334,6 +645,7 @@ object DarktableEngine {
                 var focalLength = "28mm"
                 var aperture = "f/1.8"
                 var shutterSpeed = "1/120s"
+                var captureDateMillis: Long? = null
                 var iso = 100
                 var orientation = ExifInterface.ORIENTATION_NORMAL
 
@@ -348,6 +660,16 @@ object DarktableEngine {
                     ) {
                         val tmp = w; w = h; h = tmp
                     }
+
+                    val exifDateStr = exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL)
+                        ?: exif.getAttribute(ExifInterface.TAG_DATETIME_DIGITIZED)
+                        ?: exif.getAttribute(ExifInterface.TAG_DATETIME)
+                    val subSecStr = exif.getAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL)
+                        ?: exif.getAttribute(ExifInterface.TAG_SUBSEC_TIME_DIGITIZED)
+                        ?: exif.getAttribute(ExifInterface.TAG_SUBSEC_TIME)
+                    val offsetStr = exif.getAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL)
+                        ?: exif.getAttribute(ExifInterface.TAG_OFFSET_TIME)
+                    captureDateMillis = parseExifDateTimeMillis(exifDateStr, subSecStr, offsetStr)
 
                     val make = exif.getAttribute(ExifInterface.TAG_MAKE)?.trim() ?: ""
                     val model = exif.getAttribute(ExifInterface.TAG_MODEL)?.trim() ?: ""
@@ -381,23 +703,39 @@ object DarktableEngine {
                     // EXIF optional
                 }
 
-                // Query original display name if available
-                var displayName = "Imported ${destFile.nameWithoutExtension.takeLast(6)}"
-                try {
-                    resolver.query(sourceUri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
-                        ?.use { cursor ->
+                if (captureDateMillis == null && sourceUri.scheme == "content") {
+                    try {
+                        resolver.query(
+                            sourceUri,
+                            arrayOf(MediaStore.Images.Media.DATE_TAKEN),
+                            null,
+                            null,
+                            null
+                        )?.use { cursor ->
                             if (cursor.moveToFirst()) {
-                                val idx = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+                                val idx = cursor.getColumnIndex(MediaStore.Images.Media.DATE_TAKEN)
                                 if (idx >= 0) {
-                                    val name = cursor.getString(idx)
-                                    if (!name.isNullOrBlank()) {
-                                        displayName = name.substringBeforeLast(".")
-                                    }
+                                    val taken = cursor.getLong(idx)
+                                    if (taken > 0L) captureDateMillis = taken
                                 }
                             }
                         }
-                } catch (_: Exception) {
+                    } catch (_: Exception) {
+                    }
                 }
+
+                val displayName = originalName
+                    ?.substringBeforeLast(".")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "Imported ${destFile.nameWithoutExtension.takeLast(6)}"
+
+                val xmpData = findXmpDataForImageUri(
+                    context = context,
+                    sourceUri = sourceUri,
+                    copiedImageFile = destFile,
+                    companionXmpUri = companionXmpUri,
+                    originalDisplayName = originalName
+                )
 
                 val mpValue = if (w > 0 && h > 0) (w.toDouble() * h.toDouble()) / 1_000_000.0 else 12.0
                 val dimensionsStr = if (w > 0 && h > 0) "$w x $h" else "4000 x 3000"
@@ -413,12 +751,49 @@ object DarktableEngine {
                     aperture = aperture,
                     shutterSpeed = shutterSpeed,
                     iso = iso,
-                    fileFormat = "${ext.uppercase()} Source"
+                    fileFormat = "${ext.uppercase()} Source",
+                    captureDate = captureDateMillis ?: System.currentTimeMillis(),
+                    xmpSidecarData = xmpData
                 )
             } catch (e: Exception) {
                 null
             }
         }
+
+    fun parseExifDateTimeMillis(
+        dateStr: String?,
+        subSecStr: String? = null,
+        offsetStr: String? = null
+    ): Long? {
+        if (dateStr.isNullOrBlank()) return null
+        val cleaned = dateStr.trim()
+        val formats = listOf(
+            "yyyy:MM:dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy:MM:dd"
+        )
+        for (pattern in formats) {
+            try {
+                val sdf = java.text.SimpleDateFormat(pattern, java.util.Locale.US).apply {
+                    isLenient = false
+                    if (!offsetStr.isNullOrBlank()) {
+                        val normOffset = offsetStr.trim().let {
+                            if (it == "Z") "UTC" else "GMT$it"
+                        }
+                        timeZone = java.util.TimeZone.getTimeZone(normOffset)
+                    }
+                }
+                val parsed = sdf.parse(cleaned)
+                if (parsed != null) {
+                    val subMillis = subSecStr?.trim()?.take(3)?.padEnd(3, '0')?.toLongOrNull() ?: 0L
+                    return parsed.time + subMillis
+                }
+            } catch (_: Exception) {
+            }
+        }
+        return null
+    }
 
     /**
      * Loads a Bitmap safely from uriString (supports res://, file://, /, or content://)
@@ -457,7 +832,9 @@ object DarktableEngine {
                         sample *= 2
                     }
                     val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
-                    val rawBmp = BitmapFactory.decodeFile(path, decodeOpts) ?: return@withContext null
+                    val rawBmp = BitmapFactory.decodeFile(path, decodeOpts)
+                        ?: try { ExifInterface(path).thumbnailBitmap } catch (_: Exception) { null }
+                        ?: return@withContext null
                     return@withContext applyExifOrientation(rawBmp, path)
                 }
 

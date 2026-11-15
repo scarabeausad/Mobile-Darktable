@@ -1,10 +1,14 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
@@ -13,6 +17,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -36,16 +41,28 @@ fun RatingBar(
         horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         // Reject button
-        Icon(
-            imageVector = Icons.Default.Close,
-            contentDescription = "Reject photo",
-            tint = if (isRejected) DtLabelRed else palette.textTertiary.copy(alpha = 0.5f),
+        Box(
             modifier = Modifier
                 .size((starSize + 2).dp)
+                .clip(CircleShape)
+                .background(if (isRejected) DtLabelRed.copy(alpha = 0.22f) else Color.Transparent)
+                .border(
+                    width = if (isRejected) 1.dp else 0.dp,
+                    color = if (isRejected) DtLabelRed else Color.Transparent,
+                    shape = CircleShape
+                )
                 .clickable { onRejectToggle() }
                 .padding(2.dp)
-                .testTag("btn_reject_photo")
-        )
+                .testTag("btn_reject_photo"),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Reject photo",
+                tint = if (isRejected) DtLabelRed else palette.textTertiary.copy(alpha = 0.55f),
+                modifier = Modifier.size((starSize - 2).dp)
+            )
+        }
 
         // 1 to 5 stars
         for (i in 1..5) {
@@ -57,7 +74,7 @@ fun RatingBar(
                 modifier = Modifier
                     .size(starSize.dp)
                     .clickable {
-                        if (rating == i) onRatingChange(0) else onRatingChange(i)
+                        if (!isRejected && rating == i) onRatingChange(0) else onRatingChange(i)
                     }
                     .padding(1.dp)
                     .testTag("star_$i")

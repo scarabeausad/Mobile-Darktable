@@ -141,6 +141,7 @@ fun ParameterSlider(
             ),
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(horizontal = 8.dp)
                 .testTag(if (testTagKey.isNotEmpty()) testTagKey else "slider_${label.lowercase().replace(" ", "_")}")
         )
     }

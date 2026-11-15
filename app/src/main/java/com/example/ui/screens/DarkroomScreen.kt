@@ -656,12 +656,13 @@ fun DarkroomScreen(
                     }
 
                     // Active Module Parameters Scrollable Column
+                    val paramHorizontalPadding = if (isSideDocked) 18.dp else 24.dp
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
                             .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                            .padding(horizontal = paramHorizontalPadding, vertical = 8.dp)
                     ) {
                         when (selectedTab) {
                             DarkroomTab.EXPOSURE -> {

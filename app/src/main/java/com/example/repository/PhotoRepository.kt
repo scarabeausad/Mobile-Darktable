@@ -4,6 +4,7 @@ import com.example.db.DarktableDao
 import com.example.db.PhotoEntity
 import com.example.db.StyleEntity
 import com.example.engine.ImportedPhotoInfo
+import com.example.engine.XmpSidecarData
 import com.example.engine.XmpSidecarManager
 import com.example.model.ColorLabel
 import com.example.model.DarktableStyle
@@ -247,7 +248,11 @@ class PhotoRepository(
     }
 
     suspend fun updateRating(photo: PhotoItem, newRating: Int): PhotoItem {
-        val updated = photo.copy(rating = newRating)
+        val updated = if (newRating == com.example.model.RATING_REJECTED) {
+            photo.copy(isRejected = true)
+        } else {
+            photo.copy(rating = newRating.coerceIn(0, 5), isRejected = false)
+        }
         dao.updatePhoto(PhotoEntity.fromPhotoItem(updated))
         persistSidecar(updated)
         return updated
@@ -314,15 +319,63 @@ class PhotoRepository(
         return null
     }
 
+    private fun buildImportedHistory(xmp: XmpSidecarData?): List<HistoryStep> {
+        if (xmp == null) {
+            return listOf(
+                HistoryStep(
+                    moduleName = "Base RAW Input",
+                    description = "Demosaic & Linear RGB Color Profile",
+                    paramsSnapshot = EditParams()
+                )
+            )
+        }
+        if (xmp.history.isNotEmpty()) {
+            return if (xmp.history.size == 1 && xmp.params != EditParams()) {
+                listOf(
+                    HistoryStep(
+                        moduleName = "Base RAW Input",
+                        description = "Demosaic & Linear RGB Color Profile",
+                        paramsSnapshot = EditParams()
+                    ),
+                    xmp.history.first()
+                )
+            } else {
+                xmp.history
+            }
+        }
+        if (xmp.params != EditParams()) {
+            return listOf(
+                HistoryStep(
+                    moduleName = "Base RAW Input",
+                    description = "Demosaic & Linear RGB Color Profile",
+                    paramsSnapshot = EditParams()
+                ),
+                HistoryStep(
+                    moduleName = "XMP Sidecar",
+                    description = "Loaded edits from .xmp file",
+                    paramsSnapshot = xmp.params
+                )
+            )
+        }
+        return listOf(
+            HistoryStep(
+                moduleName = "Base RAW Input",
+                description = "Demosaic & Linear RGB Color Profile",
+                paramsSnapshot = EditParams()
+            )
+        )
+    }
+
     suspend fun importPhoto(
         uriString: String,
         title: String,
-        dimensions: String = "4000 x 3000"
+        dimensions: String = "4000 x 3000",
+        xmpData: XmpSidecarData? = null
     ): PhotoItem {
         val item = PhotoItem(
             id = UUID.randomUUID().toString(),
             uriString = uriString,
-            title = title,
+            title = xmpData?.title?.takeIf { it.isNotBlank() } ?: title,
             fileFormat = "JPEG / RAW Source",
             dimensions = dimensions,
             megaPixels = "12.0 MP",
@@ -332,10 +385,14 @@ class PhotoRepository(
             aperture = "f/1.8",
             shutterSpeed = "1/120s",
             iso = 100,
-            rating = 0,
-            colorLabels = emptySet(),
-            tags = listOf("Imported", "User Media"),
-            params = EditParams()
+            rating = xmpData?.rating ?: 0,
+            isRejected = xmpData?.isRejected ?: false,
+            colorLabels = xmpData?.colorLabels ?: emptySet(),
+            tags = if (xmpData != null && xmpData.tags.isNotEmpty()) xmpData.tags else listOf("Imported", "User Media"),
+            params = xmpData?.params ?: EditParams(),
+            history = buildImportedHistory(xmpData),
+            snapshotA = xmpData?.snapshotA,
+            snapshotB = xmpData?.snapshotB
         )
         dao.insertPhoto(PhotoEntity.fromPhotoItem(item))
         persistSidecar(item)
@@ -343,10 +400,12 @@ class PhotoRepository(
     }
 
     suspend fun importPhotoWithMetadata(info: ImportedPhotoInfo): PhotoItem {
+        val xmp = info.xmpSidecarData
         val item = PhotoItem(
             id = UUID.randomUUID().toString(),
             uriString = info.persistentUriString,
-            title = info.title,
+            title = xmp?.title?.takeIf { it.isNotBlank() } ?: info.title,
+            captureDate = info.captureDate,
             fileFormat = info.fileFormat,
             dimensions = info.dimensions,
             megaPixels = info.megaPixels,
@@ -356,14 +415,47 @@ class PhotoRepository(
             aperture = info.aperture,
             shutterSpeed = info.shutterSpeed,
             iso = info.iso,
-            rating = 0,
-            colorLabels = emptySet(),
-            tags = listOf("Imported", "User Media"),
-            params = EditParams()
+            rating = xmp?.rating ?: 0,
+            isRejected = xmp?.isRejected ?: false,
+            colorLabels = xmp?.colorLabels ?: emptySet(),
+            tags = if (xmp != null && xmp.tags.isNotEmpty()) xmp.tags else listOf("Imported", "User Media"),
+            params = xmp?.params ?: EditParams(),
+            history = buildImportedHistory(xmp),
+            snapshotA = xmp?.snapshotA,
+            snapshotB = xmp?.snapshotB
         )
         dao.insertPhoto(PhotoEntity.fromPhotoItem(item))
         persistSidecar(item)
         return item
+    }
+
+    suspend fun applyXmpSidecar(photo: PhotoItem, xmpData: XmpSidecarData): PhotoItem {
+        val mergedHistory = if (xmpData.history.isNotEmpty()) {
+            xmpData.history
+        } else {
+            val base = photo.history.toMutableList()
+            base.add(
+                HistoryStep(
+                    moduleName = "XMP Sidecar",
+                    description = "Loaded edits from .xmp file",
+                    paramsSnapshot = xmpData.params
+                )
+            )
+            base
+        }
+        val updated = photo.copy(
+            rating = xmpData.rating,
+            isRejected = xmpData.isRejected,
+            colorLabels = xmpData.colorLabels,
+            tags = if (xmpData.tags.isNotEmpty()) xmpData.tags else photo.tags,
+            params = xmpData.params,
+            history = mergedHistory,
+            snapshotA = xmpData.snapshotA ?: photo.snapshotA,
+            snapshotB = xmpData.snapshotB ?: photo.snapshotB
+        )
+        dao.updatePhoto(PhotoEntity.fromPhotoItem(updated))
+        persistSidecar(updated)
+        return updated
     }
 
     suspend fun duplicatePhoto(photo: PhotoItem) {

@@ -18,6 +18,10 @@ import com.example.model.HistogramData
 import com.example.model.HistogramScale
 import com.example.model.PhotoItem
 import com.example.model.RatingComparator
+import com.example.model.SortDirection
+import com.example.model.SortField
+import com.example.model.matchesRatingFilter
+import com.example.model.sortedByOption
 import com.example.repository.PhotoRepository
 import com.example.repository.SettingsRepository
 import kotlinx.coroutines.Dispatchers
@@ -85,7 +89,7 @@ class DarktableViewModel(application: Application) : AndroidViewModel(applicatio
     private val _colorFilterMode = MutableStateFlow(ColorFilterMode.AT_LEAST_ONE)
     val colorFilterMode = _colorFilterMode.asStateFlow()
 
-    private val _showRejected = MutableStateFlow(false)
+    private val _showRejected = MutableStateFlow(true)
     val showRejected = _showRejected.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
@@ -93,6 +97,14 @@ class DarktableViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _gridColumns = MutableStateFlow(2)
     val gridColumns = _gridColumns.asStateFlow()
+
+    // Lighttable Sort state (persisted via DataStore)
+    private val _sortField = MutableStateFlow(SortField.CAPTURE_DATE)
+    val sortField: StateFlow<SortField> = _sortField.asStateFlow()
+
+    private val _sortDirection = MutableStateFlow(SortDirection.DESCENDING)
+    val sortDirection: StateFlow<SortDirection> = _sortDirection.asStateFlow()
+    private var sortUserOverridden = false
 
     // Active Photo & Darkroom state
     private val _selectedPhoto = MutableStateFlow<PhotoItem?>(null)
@@ -120,12 +132,18 @@ class DarktableViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isHoldOriginalActive = MutableStateFlow(false)
     val isHoldOriginalActive = _isHoldOriginalActive.asStateFlow()
 
-    // Export Status
+    // Export & Import Status
     private val _isExporting = MutableStateFlow(false)
     val isExporting = _isExporting.asStateFlow()
 
     private val _exportMessage = MutableStateFlow<String?>(null)
     val exportMessage = _exportMessage.asStateFlow()
+
+    private val _importMessage = MutableStateFlow<String?>(null)
+    val importMessage = _importMessage.asStateFlow()
+
+    private val _photoNeedingXmpAttachment = MutableStateFlow<PhotoItem?>(null)
+    val photoNeedingXmpAttachment = _photoNeedingXmpAttachment.asStateFlow()
 
     private var loadJob: Job? = null
 
@@ -148,7 +166,9 @@ class DarktableViewModel(application: Application) : AndroidViewModel(applicatio
         val selectedColors: Set<ColorLabel>,
         val colorMode: ColorFilterMode,
         val showRej: Boolean,
-        val query: String
+        val query: String,
+        val sortField: SortField,
+        val sortDirection: SortDirection
     )
 
     val filteredPhotos: StateFlow<List<PhotoItem>> = combine(
@@ -157,20 +177,13 @@ class DarktableViewModel(application: Application) : AndroidViewModel(applicatio
         },
         combine(colorFilterMode, showRejected, searchQuery) { mode, rej, q ->
             Triple(mode, rej, q)
-        }
-    ) { (r, comp, colors), (mode, rej, q) ->
-        FilterCriteria(r, comp, colors, mode, rej, q)
+        },
+        combine(sortField, sortDirection) { field, dir -> field to dir }
+    ) { (r, comp, colors), (mode, rej, q), (field, dir) ->
+        FilterCriteria(r, comp, colors, mode, rej, q, field, dir)
     }.combine(rawPhotos) { criteria, photos ->
         photos.filter { photo ->
-            val matchRating = if (criteria.rating == null) {
-                true
-            } else {
-                when (criteria.comparator) {
-                    RatingComparator.EXACT -> photo.rating == criteria.rating
-                    RatingComparator.LESS_EQUAL -> photo.rating <= criteria.rating
-                    RatingComparator.GREATER_EQUAL -> photo.rating >= criteria.rating
-                }
-            }
+            val matchRating = photo.matchesRatingFilter(criteria.rating, criteria.comparator)
 
             val matchColor = if (criteria.selectedColors.isEmpty()) {
                 true
@@ -192,12 +205,20 @@ class DarktableViewModel(application: Application) : AndroidViewModel(applicatio
                     photo.tags.any { it.contains(criteria.query, ignoreCase = true) }
 
             matchRating && matchColor && matchRej && matchQuery
-        }
+        }.sortedByOption(criteria.sortField, criteria.sortDirection)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
         viewModelScope.launch {
             repository.ensureInitialDataSeeded()
+        }
+        viewModelScope.launch {
+            settingsRepository.settingsFlow.collect { saved ->
+                if (!sortUserOverridden) {
+                    _sortField.value = saved.sortField
+                    _sortDirection.value = saved.sortDirection
+                }
+            }
         }
         observeLivePreviewPipeline()
     }
@@ -385,6 +406,45 @@ class DarktableViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setGridColumns(cols: Int) {
         _gridColumns.value = cols.coerceIn(1, 3)
+    }
+
+    fun setSortField(field: SortField) {
+        sortUserOverridden = true
+        val newDir = if (_sortField.value == field) {
+            // Tapping the already-active sort field toggles Asc <-> Desc
+            if (_sortDirection.value == SortDirection.ASCENDING) SortDirection.DESCENDING else SortDirection.ASCENDING
+        } else {
+            // Sensible default direction when switching fields: Filename A-Z (Asc), Date/Rating newest/highest first (Desc)
+            if (field == SortField.FILENAME) SortDirection.ASCENDING else SortDirection.DESCENDING
+        }
+        _sortField.value = field
+        _sortDirection.value = newDir
+        viewModelScope.launch {
+            settingsRepository.setSortOption(field, newDir)
+        }
+    }
+
+    fun setSortOption(field: SortField, direction: SortDirection) {
+        sortUserOverridden = true
+        _sortField.value = field
+        _sortDirection.value = direction
+        viewModelScope.launch {
+            settingsRepository.setSortOption(field, direction)
+        }
+    }
+
+    fun toggleSortDirection() {
+        sortUserOverridden = true
+        val newDir = if (_sortDirection.value == SortDirection.ASCENDING) {
+            SortDirection.DESCENDING
+        } else {
+            SortDirection.ASCENDING
+        }
+        val currentField = _sortField.value
+        _sortDirection.value = newDir
+        viewModelScope.launch {
+            settingsRepository.setSortOption(currentField, newDir)
+        }
     }
 
     fun selectPhoto(photo: PhotoItem, navigateToDarkroom: Boolean = true) {
@@ -595,19 +655,160 @@ class DarktableViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun importPhoto(uri: Uri, fileName: String? = null) {
+    fun importPhoto(
+        uri: Uri,
+        fileName: String? = null,
+        companionXmpUri: Uri? = null
+    ) {
         viewModelScope.launch {
-            // Copy image into persistent internal storage so it remains available across app restarts
-            val importedInfo = DarktableEngine.importToInternalStorage(getApplication(), uri)
-            val newItem = if (importedInfo != null) {
-                val finalInfo = if (fileName != null) importedInfo.copy(title = fileName) else importedInfo
-                repository.importPhotoWithMetadata(finalInfo)
+            val (item, hadXmp) = importSingleInternal(uri, fileName, companionXmpUri)
+            selectPhoto(item, navigateToDarkroom = true)
+            if (hadXmp) {
+                _photoNeedingXmpAttachment.value = null
+                _importMessage.value = "Imported '${item.title}' with XMP sidecar edits"
             } else {
-                val title = fileName ?: "Imported Photo ${System.currentTimeMillis() % 1000}"
-                repository.importPhoto(uri.toString(), title)
+                _photoNeedingXmpAttachment.value = item
+                _importMessage.value = "Imported '${item.title}' (no sibling .xmp accessible)"
             }
-            selectPhoto(newItem, navigateToDarkroom = true)
         }
+    }
+
+    fun importFromMultipleUris(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val resolver = app.contentResolver
+            val images = mutableListOf<Pair<String, Uri>>()
+            val xmps = mutableMapOf<String, Uri>()
+
+            for (uri in uris) {
+                val name = DarktableEngine.queryDisplayName(app, uri) ?: uri.lastPathSegment ?: "file"
+                val mime = try { resolver.getType(uri) } catch (_: Exception) { null }
+                when {
+                    DarktableEngine.isUriLikelyXmp(app, uri, name, mime) -> xmps[name] = uri
+                    DarktableEngine.isImageFileName(name, mime) -> images.add(name to uri)
+                }
+            }
+
+            if (images.isEmpty()) {
+                // If user picked only an .xmp while a photo is already selected, apply it directly!
+                val selected = _selectedPhoto.value
+                if (selected != null && xmps.size == 1) {
+                    applyXmpToPhoto(selected, xmps.values.first())
+                } else {
+                    _importMessage.value = "Select an image file along with its .xmp sidecar to import"
+                }
+                return@launch
+            }
+
+            val xmpNames = xmps.keys
+            val singlePairFallback = if (images.size == 1 && xmps.size == 1) xmps.values.first() else null
+            var importedWithXmp = 0
+            var lastItem: PhotoItem? = null
+
+            for ((imgName, imgUri) in images) {
+                val matchedXmpName = com.example.engine.XmpSidecarManager.findMatchingXmpName(imgName, xmpNames)
+                val xmpUri = matchedXmpName?.let { xmps[it] } ?: singlePairFallback
+                val (item, hadXmp) = importSingleInternal(imgUri, null, xmpUri)
+                lastItem = item
+                if (hadXmp) importedWithXmp++
+            }
+
+            if (images.size == 1 && lastItem != null) {
+                selectPhoto(lastItem, navigateToDarkroom = true)
+                if (importedWithXmp > 0) {
+                    _photoNeedingXmpAttachment.value = null
+                    _importMessage.value = "Imported '${lastItem.title}' with XMP sidecar edits"
+                } else {
+                    _photoNeedingXmpAttachment.value = lastItem
+                    _importMessage.value = "Imported '${lastItem.title}' (no .xmp found — tap ATTACH .XMP)"
+                }
+            } else {
+                _photoNeedingXmpAttachment.value = null
+                _importMessage.value = if (importedWithXmp > 0) {
+                    "Imported ${images.size} photos ($importedWithXmp with XMP edits)"
+                } else {
+                    "Imported ${images.size} photos"
+                }
+            }
+        }
+    }
+
+    fun importFromFolderTree(treeUri: Uri) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            try {
+                app.contentResolver.takePersistableUriPermission(
+                    treeUri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+            val pairs = DarktableEngine.listFolderImagesWithXmp(app, treeUri)
+            if (pairs.isEmpty()) {
+                _importMessage.value = "No supported images found in selected folder"
+                return@launch
+            }
+            var importedWithXmp = 0
+            var lastItem: PhotoItem? = null
+            for ((imgUri, xmpUri) in pairs) {
+                val (item, hadXmp) = importSingleInternal(imgUri, null, xmpUri)
+                lastItem = item
+                if (hadXmp) importedWithXmp++
+            }
+            if (pairs.size == 1 && lastItem != null) {
+                selectPhoto(lastItem, navigateToDarkroom = true)
+            }
+            _photoNeedingXmpAttachment.value = null
+            _importMessage.value = if (importedWithXmp > 0) {
+                "Imported ${pairs.size} photo${if (pairs.size == 1) "" else "s"} ($importedWithXmp with XMP edits)"
+            } else {
+                "Imported ${pairs.size} photo${if (pairs.size == 1) "" else "s"}"
+            }
+        }
+    }
+
+    fun applyXmpToPhoto(photo: PhotoItem, xmpUri: Uri) {
+        viewModelScope.launch {
+            val xmpData = DarktableEngine.readXmpFromUri(getApplication(), xmpUri)
+            if (xmpData == null) {
+                _importMessage.value = "Could not parse edits from selected .xmp file"
+                return@launch
+            }
+            val updated = repository.applyXmpSidecar(photo, xmpData)
+            if (_selectedPhoto.value?.id == updated.id) {
+                _selectedPhoto.value = updated
+                _activeParams.value = updated.params
+            }
+            _photoNeedingXmpAttachment.value = null
+            _importMessage.value = "Applied XMP edits to '${updated.title}'"
+        }
+    }
+
+    private suspend fun importSingleInternal(
+        uri: Uri,
+        fileName: String?,
+        companionXmpUri: Uri?
+    ): Pair<PhotoItem, Boolean> {
+        val app = getApplication<Application>()
+        val importedInfo = DarktableEngine.importToInternalStorage(app, uri, companionXmpUri)
+        return if (importedInfo != null) {
+            val finalInfo = if (fileName != null) importedInfo.copy(title = fileName) else importedInfo
+            val item = repository.importPhotoWithMetadata(finalInfo)
+            item to (finalInfo.xmpSidecarData != null)
+        } else {
+            val fallbackXmp = DarktableEngine.findXmpDataForImageUri(app, uri, null, companionXmpUri)
+            val title = fileName
+                ?: DarktableEngine.queryDisplayName(app, uri)?.substringBeforeLast(".")
+                ?: "Imported Photo ${System.currentTimeMillis() % 1000}"
+            val item = repository.importPhoto(uri.toString(), title, xmpData = fallbackXmp)
+            item to (fallbackXmp != null)
+        }
+    }
+
+    fun clearImportMessage() {
+        _importMessage.value = null
+        _photoNeedingXmpAttachment.value = null
     }
 
     suspend fun getXmpSidecarInfo(photo: PhotoItem): Pair<String, String> {

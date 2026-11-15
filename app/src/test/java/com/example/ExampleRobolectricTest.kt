@@ -2,12 +2,16 @@ package com.example
 
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.example.engine.DarktableEngine
 import com.example.model.ColorFilterMode
@@ -15,7 +19,12 @@ import com.example.model.ColorLabel
 import com.example.model.EditParams
 import com.example.model.HistogramScale
 import com.example.model.PhotoItem
+import com.example.model.RATING_REJECTED
 import com.example.model.RatingComparator
+import com.example.model.SortDirection
+import com.example.model.SortField
+import com.example.model.matchesRatingFilter
+import com.example.model.sortedByOption
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -419,6 +428,510 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("photo_edited_thumbnail_sample_lake_01", useUnmergedTree = true)
             .assertIsDisplayed()
     }
+
+    @Test
+    fun `sibling xmp discovery and filename pairing supports dot-ext-xmp and stem-xmp`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val tempDir = java.io.File(context.cacheDir, "xmp_discovery_${System.nanoTime()}").apply { mkdirs() }
+        try {
+            val img1 = java.io.File(tempDir, "alpine.jpg").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+            val xmp1 = java.io.File(tempDir, "alpine.jpg.xmp").apply { writeText("<x:xmpmeta/>") }
+            assertEquals(xmp1.absolutePath, com.example.engine.XmpSidecarManager.findSiblingSidecarFile(img1)?.absolutePath)
+
+            val img2 = java.io.File(tempDir, "sunset.dng").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+            val xmp2 = java.io.File(tempDir, "sunset.xmp").apply { writeText("<x:xmpmeta/>") }
+            assertEquals(xmp2.absolutePath, com.example.engine.XmpSidecarManager.findSiblingSidecarFile(img2)?.absolutePath)
+
+            val matched = com.example.engine.XmpSidecarManager.findMatchingXmpName(
+                "IMG_2026.ARW",
+                listOf("other.xmp", "IMG_2026.xmp", "IMG_2026.ARW.xmp")
+            )
+            assertEquals("IMG_2026.ARW.xmp", matched)
+
+            val embeddedFile = java.io.File(tempDir, "embedded.jpg")
+            val embeddedXml = com.example.engine.XmpSidecarManager.generateXmpXml(
+                PhotoItem(id = "emb", uriString = "", title = "Emb", params = EditParams(exposure = 0.7f))
+            )
+            embeddedFile.writeBytes(byteArrayOf(0xFF.toByte(), 0xD8.toByte()) + embeddedXml.toByteArray(Charsets.UTF_8) + byteArrayOf(0xFF.toByte(), 0xD9.toByte()))
+            val extracted = com.example.engine.XmpSidecarManager.extractEmbeddedXmpXml(embeddedFile)
+            assertTrue("Embedded Darktable XMP XML must be extracted", extracted != null && extracted.contains("exposure=\"0.7\""))
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `importing image with sibling xmp file reads edits and renders them on imported image`() = kotlinx.coroutines.runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val tempDir = java.io.File(context.cacheDir, "xmp_import_${System.nanoTime()}").apply { mkdirs() }
+        try {
+            val imgFile = java.io.File(tempDir, "crimson_import.jpg")
+            val srcBmp = android.graphics.Bitmap.createBitmap(160, 100, android.graphics.Bitmap.Config.ARGB_8888).apply {
+                eraseColor(android.graphics.Color.rgb(210, 40, 20))
+            }
+            java.io.FileOutputStream(imgFile).use { out ->
+                srcBmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+            }
+
+            val expectedParams = EditParams(
+                exposure = 0.65f,
+                contrast = 24f,
+                isMonochrome = true,
+                cropAspectRatio = "1:1",
+                cropLeft = 0.1875f,
+                cropTop = 0f,
+                cropRight = 0.8125f,
+                cropBottom = 1f
+            )
+            val sourcePhoto = PhotoItem(
+                id = "external_src",
+                uriString = android.net.Uri.fromFile(imgFile).toString(),
+                title = "Crimson Peak XMP",
+                rating = 5,
+                colorLabels = setOf(ColorLabel.RED, ColorLabel.BLUE),
+                tags = listOf("Imported", "XMP"),
+                params = expectedParams
+            )
+            val xmpFile = java.io.File(tempDir, "crimson_import.jpg.xmp")
+            xmpFile.writeText(com.example.engine.XmpSidecarManager.generateXmpXml(sourcePhoto), Charsets.UTF_8)
+
+            val importedInfo = DarktableEngine.importToInternalStorage(context, android.net.Uri.fromFile(imgFile))
+            requireNotNull(importedInfo)
+            requireNotNull(importedInfo.xmpSidecarData)
+            assertEquals(true, importedInfo.xmpSidecarData!!.params.isMonochrome)
+            assertEquals("1:1", importedInfo.xmpSidecarData!!.params.cropAspectRatio)
+            assertEquals(0.65f, importedInfo.xmpSidecarData!!.params.exposure, 0.001f)
+
+            val dao = com.example.db.DarktableDatabase.getDatabase(context).darktableDao()
+            val repo = com.example.repository.PhotoRepository(dao, context.filesDir)
+            val importedItem = repo.importPhotoWithMetadata(importedInfo)
+
+            assertEquals("Crimson Peak XMP", importedItem.title)
+            assertEquals(5, importedItem.rating)
+            assertEquals(setOf(ColorLabel.RED, ColorLabel.BLUE), importedItem.colorLabels)
+            assertTrue(importedItem.params.isMonochrome)
+            assertEquals("1:1", importedItem.params.cropAspectRatio)
+            assertTrue("History should mark imported XMP as edited", importedItem.history.size > 1)
+
+            val vm = com.example.viewmodel.DarktableViewModel(ApplicationProvider.getApplicationContext())
+            val renderedThumb = vm.getOrRenderEditedThumbnail(importedItem)
+            requireNotNull(renderedThumb)
+            assertEquals("1:1 crop from XMP must produce square overview thumbnail", renderedThumb.width, renderedThumb.height)
+            val centerPixel = renderedThumb.getPixel(renderedThumb.width / 2, renderedThumb.height / 2)
+            assertEquals(android.graphics.Color.red(centerPixel), android.graphics.Color.green(centerPixel))
+            assertEquals(android.graphics.Color.green(centerPixel), android.graphics.Color.blue(centerPixel))
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `clicking import fab opens options including files with xmp and folder auto match`() {
+        composeTestRule.waitUntil(timeoutMillis = 5000) {
+            composeTestRule.onAllNodesWithTag("fab_import_photo")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("fab_import_photo").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("btn_import_files_with_xmp").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("btn_import_folder_xmp").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("btn_import_gallery").assertIsDisplayed()
+    }
+
+    @Test
+    fun `matchesRatingFilter handles rejected status across comparators`() {
+        val rejectedWithOldStars = PhotoItem(title = "Rejected", uriString = "", rating = 4, isRejected = true)
+        val unrated = PhotoItem(title = "Unrated", uriString = "", rating = 0, isRejected = false)
+        val threeStars = PhotoItem(title = "Three Stars", uriString = "", rating = 3, isRejected = false)
+        val catalog = listOf(rejectedWithOldStars, unrated, threeStars)
+
+        // ALL returns everything including rejected
+        assertEquals(3, catalog.count { it.matchesRatingFilter(null, RatingComparator.EXACT) })
+
+        // EXACT Rejected returns only rejected
+        val exactRejected = catalog.filter { it.matchesRatingFilter(RATING_REJECTED, RatingComparator.EXACT) }
+        assertEquals(listOf(rejectedWithOldStars), exactRejected)
+
+        // LESS_EQUAL Rejected returns only rejected (-1 <= -1)
+        val lessEqRejected = catalog.filter { it.matchesRatingFilter(RATING_REJECTED, RatingComparator.LESS_EQUAL) }
+        assertEquals(listOf(rejectedWithOldStars), lessEqRejected)
+
+        // GREATER_EQUAL Rejected returns rejected (-1) and >= 0 stars
+        val greaterEqRejected = catalog.filter { it.matchesRatingFilter(RATING_REJECTED, RatingComparator.GREATER_EQUAL) }
+        assertEquals(3, greaterEqRejected.size)
+
+        // EXACT 4 stars does NOT include rejectedWithOldStars
+        val exact4 = catalog.filter { it.matchesRatingFilter(4, RatingComparator.EXACT) }
+        assertTrue(exact4.isEmpty())
+
+        // LESS_EQUAL 0 stars includes both rejected (-1) and 0-star unrated (0)
+        val lessEq0 = catalog.filter { it.matchesRatingFilter(0, RatingComparator.LESS_EQUAL) }
+        assertEquals(listOf(rejectedWithOldStars, unrated), lessEq0)
+    }
+
+    @Test
+    fun `color filter mode button is on the left before color tags and rejected filter works end to end`() {
+        composeTestRule.waitUntil(timeoutMillis = 5000) {
+            composeTestRule.onAllNodesWithTag("photo_card_sample_lake_01")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // Verify Row 1 & Row 2 alignment: comparator / mode button on LEFT, options on RIGHT
+        val ratingButtonBounds = composeTestRule.onNodeWithTag("btn_cycle_rating_comparator").getBoundsInRoot()
+        val ratingAllBounds = composeTestRule.onNodeWithTag("filter_stars_all").getBoundsInRoot()
+        assertTrue(
+            "Star rating comparator button must be to the left of filter chips",
+            ratingButtonBounds.right <= ratingAllBounds.left
+        )
+
+        val colorModeBounds = composeTestRule.onNodeWithTag("btn_toggle_color_filter_mode").getBoundsInRoot()
+        val colorDotsBounds = composeTestRule.onNodeWithTag("filter_color_labels").getBoundsInRoot()
+        assertTrue(
+            "Color filter mode button must be to the left of color tag dots to match star rating row",
+            colorModeBounds.right <= colorDotsBounds.left
+        )
+
+        // Verify Rejected filter chip is visible in star rating row
+        composeTestRule.onNodeWithTag("filter_rejected").performScrollTo().assertIsDisplayed()
+
+        // Mark first photo as Rejected using card's reject button
+        composeTestRule.onAllNodesWithTag("btn_reject_photo", useUnmergedTree = true)
+            .onFirst()
+            .performClick()
+
+        composeTestRule.waitUntil(timeoutMillis = 5000) {
+            composeTestRule.onAllNodesWithTag("badge_rejected_sample_lake_01", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("badge_rejected_sample_lake_01", useUnmergedTree = true)
+            .assertIsDisplayed()
+
+        // Filter by Rejected in the Star Rating bar
+        composeTestRule.onNodeWithTag("filter_rejected").performClick()
+        composeTestRule.waitForIdle()
+
+        // Rejected photo stays visible, while non-rejected sample_portrait_02 is filtered out
+        composeTestRule.onNodeWithTag("photo_card_sample_lake_01").assertIsDisplayed()
+        assertTrue(
+            composeTestRule.onAllNodesWithTag("photo_card_sample_portrait_02")
+                .fetchSemanticsNodes().isEmpty()
+        )
+    }
+
+    private fun floatsToLittleEndianHex(intsAndFloats: List<Number>): String {
+        val buf = java.nio.ByteBuffer.allocate(intsAndFloats.size * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        for (v in intsAndFloats) {
+            when (v) {
+                is Int -> buf.putInt(v)
+                else -> buf.putFloat(v.toFloat())
+            }
+        }
+        return buf.array().joinToString("") { "%02x".format(it) }
+    }
+
+    @Test
+    fun `importing image with desktop darktable hex xmp sidecar applies and renders edits`() = kotlinx.coroutines.runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val tempDir = java.io.File(context.cacheDir, "dt_desktop_xmp_${System.nanoTime()}").apply { mkdirs() }
+        try {
+            val imgFile = java.io.File(tempDir, "DSC0100.jpg")
+            val srcBmp = android.graphics.Bitmap.createBitmap(200, 100, android.graphics.Bitmap.Config.ARGB_8888).apply {
+                eraseColor(android.graphics.Color.rgb(220, 45, 25))
+            }
+            java.io.FileOutputStream(imgFile).use { out ->
+                srcBmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+            }
+
+            // Build authentic desktop Darktable XMP with UTF-8 BOM + binary hex params
+            val exposureHex = floatsToLittleEndianHex(listOf(0, 0.0f, 1.5f, 0.5f, 0.0f))
+            // Crop square center on 200x100: left=0.25, top=0.0, right=0.75, bottom=1.0
+            val cropHex = floatsToLittleEndianHex(listOf(0.25f, 0.0f, 0.75f, 1.0f, 1, 1))
+            val disabledVignetteHex = floatsToLittleEndianHex(listOf(50.0f, 50.0f, -0.8f))
+
+            val desktopXmp = "\uFEFF" + """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 4.4.0-Exiv2">
+                 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+                  <rdf:Description rdf:about=""
+                    xmlns:exif="http://ns.adobe.com/exif/1.0/"
+                    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+                    xmlns:darktable="http://darktable.sf.net/"
+                    xmp:Rating="4"
+                    darktable:xmp_version="5"
+                    darktable:history_end="4">
+                   <darktable:colorlabels>
+                    <rdf:Seq>
+                     <rdf:li>0</rdf:li>
+                     <rdf:li>3</rdf:li>
+                    </rdf:Seq>
+                   </darktable:colorlabels>
+                   <darktable:history>
+                    <rdf:Seq>
+                     <rdf:li darktable:num="0" darktable:operation="exposure" darktable:enabled="1" darktable:modversion="6" darktable:params="$exposureHex"/>
+                     <rdf:li darktable:num="1" darktable:operation="crop" darktable:enabled="1" darktable:modversion="1" darktable:params="$cropHex"/>
+                     <rdf:li darktable:num="2" darktable:operation="monochrome" darktable:enabled="1" darktable:modversion="2" darktable:params="00000000"/>
+                     <rdf:li darktable:num="3" darktable:operation="vignette" darktable:enabled="0" darktable:modversion="4" darktable:params="$disabledVignetteHex"/>
+                    </rdf:Seq>
+                   </darktable:history>
+                  </rdf:Description>
+                 </rdf:RDF>
+                </x:xmpmeta>
+            """.trimIndent()
+
+            java.io.File(tempDir, "DSC0100.jpg.xmp").writeText(desktopXmp, Charsets.UTF_8)
+
+            // Verify extensionless name matching too
+            assertEquals(
+                "DSC0100.jpg.xmp",
+                com.example.engine.XmpSidecarManager.findMatchingXmpName("DSC0100", listOf("other.xmp", "DSC0100.jpg.xmp"))
+            )
+
+            val importedInfo = DarktableEngine.importToInternalStorage(context, android.net.Uri.fromFile(imgFile))
+            requireNotNull(importedInfo)
+            val xmpData = importedInfo.xmpSidecarData
+            requireNotNull(xmpData)
+
+            assertEquals(4, xmpData.rating)
+            assertEquals(setOf(ColorLabel.RED, ColorLabel.BLUE), xmpData.colorLabels)
+            assertEquals(1.5f, xmpData.params.exposure, 0.01f)
+            assertTrue(xmpData.params.isMonochrome)
+            assertEquals(0.25f, xmpData.params.cropLeft, 0.001f)
+            assertEquals(0.75f, xmpData.params.cropRight, 0.001f)
+            assertEquals("Disabled vignette step must remain 0", 0f, xmpData.params.vignette, 0.001f)
+
+            val dao = com.example.db.DarktableDatabase.getDatabase(context).darktableDao()
+            val repo = com.example.repository.PhotoRepository(dao, context.filesDir)
+            val item = repo.importPhotoWithMetadata(importedInfo)
+
+            val vm = com.example.viewmodel.DarktableViewModel(ApplicationProvider.getApplicationContext())
+            val rendered = vm.getOrRenderEditedThumbnail(item)
+            requireNotNull(rendered)
+            assertEquals("Imported desktop XMP crop must yield square output", rendered.width, rendered.height)
+            val center = rendered.getPixel(rendered.width / 2, rendered.height / 2)
+            assertEquals(android.graphics.Color.red(center), android.graphics.Color.green(center))
+            assertEquals(android.graphics.Color.green(center), android.graphics.Color.blue(center))
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `parses adobe camera raw crs xmp with multiple rdf description blocks`() {
+        val crsXmp = """
+            <?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+            <x:xmpmeta xmlns:x="adobe:ns:meta/">
+             <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+              <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="5" xmp:Label="Purple"/>
+              <rdf:Description rdf:about=""
+                xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+                crs:Exposure2012="+0.90"
+                crs:Contrast2012="+20"
+                crs:Temperature="6500"
+                crs:ConvertToGrayscale="True"
+                crs:HasCrop="True"
+                crs:CropLeft="0.1"
+                crs:CropTop="0.15"
+                crs:CropRight="0.9"
+                crs:CropBottom="0.85"/>
+             </rdf:RDF>
+            </x:xmpmeta>
+            <?xpacket end="w"?>
+        """.trimIndent()
+
+        val parsed = com.example.engine.XmpSidecarManager.parseXmpXml(crsXmp)
+        requireNotNull(parsed)
+        assertEquals(5, parsed.rating)
+        assertEquals(setOf(ColorLabel.PURPLE), parsed.colorLabels)
+        assertEquals(0.90f, parsed.params.exposure, 0.001f)
+        assertEquals(20f, parsed.params.contrast, 0.001f)
+        assertEquals(6500f, parsed.params.temperature, 0.001f)
+        assertTrue(parsed.params.isMonochrome)
+        assertEquals(0.1f, parsed.params.cropLeft, 0.001f)
+        assertEquals(0.85f, parsed.params.cropBottom, 0.001f)
+    }
+
+    @Test
+    fun `exif capture date parsing and photo sorting by filename, exif date, and star rating`() {
+        val t1 = DarktableEngine.parseExifDateTimeMillis("2024:06:15 08:30:45", "25", "Z")
+        val t2 = DarktableEngine.parseExifDateTimeMillis("2024:06:15 08:30:45", "50", "Z")
+        requireNotNull(t1)
+        requireNotNull(t2)
+        assertEquals(250L, t2 - t1)
+
+        val alphaLow = PhotoItem(
+            id = "a",
+            uriString = "",
+            title = "alpha_frame.ARW",
+            captureDate = 2000L,
+            rating = 2
+        )
+        val betaHigh = PhotoItem(
+            id = "b",
+            uriString = "",
+            title = "Beta_frame.ARW",
+            captureDate = 1000L,
+            rating = 5
+        )
+        val charlieRejected = PhotoItem(
+            id = "c",
+            uriString = "",
+            title = "charlie.DNG",
+            captureDate = 3000L,
+            rating = 4,
+            isRejected = true
+        )
+        val items = listOf(betaHigh, charlieRejected, alphaLow)
+
+        // Filename Asc / Desc (case-insensitive)
+        assertEquals(
+            listOf("a", "b", "c"),
+            items.sortedByOption(SortField.FILENAME, SortDirection.ASCENDING).map { it.id }
+        )
+        assertEquals(
+            listOf("c", "b", "a"),
+            items.sortedByOption(SortField.FILENAME, SortDirection.DESCENDING).map { it.id }
+        )
+
+        // EXIF Capture Date & Time Asc / Desc
+        assertEquals(
+            listOf("b", "a", "c"),
+            items.sortedByOption(SortField.CAPTURE_DATE, SortDirection.ASCENDING).map { it.id }
+        )
+        assertEquals(
+            listOf("c", "a", "b"),
+            items.sortedByOption(SortField.CAPTURE_DATE, SortDirection.DESCENDING).map { it.id }
+        )
+
+        // Star Rating Asc / Desc (rejected = -1 ranks below 0..5 stars)
+        assertEquals(
+            listOf("c", "a", "b"),
+            items.sortedByOption(SortField.STAR_RATING, SortDirection.ASCENDING).map { it.id }
+        )
+        assertEquals(
+            listOf("b", "a", "c"),
+            items.sortedByOption(SortField.STAR_RATING, SortDirection.DESCENDING).map { it.id }
+        )
+    }
+
+    private fun comesBeforeInGrid(
+        firstTag: String,
+        secondTag: String
+    ): Boolean {
+        val b1 = composeTestRule.onNodeWithTag(firstTag).getBoundsInRoot()
+        val b2 = composeTestRule.onNodeWithTag(secondTag).getBoundsInRoot()
+        return b1.top < b2.top || (b1.top == b2.top && b1.left < b2.left)
+    }
+
+    @Test
+    @Config(qualifiers = "w411dp-h891dp")
+    fun `lighttable sort options reorder overview grid by filename, exif date, star rating, and direction`() {
+        composeTestRule.waitUntil(timeoutMillis = 5000) {
+            composeTestRule.onAllNodesWithTag("photo_card_sample_lake_01").fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodesWithTag("photo_card_sample_desert_04").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // Verify Sort bar controls are visible on Overview
+        composeTestRule.onNodeWithTag("btn_toggle_sort_direction").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sort_field_capture_date").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sort_field_filename").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sort_field_star_rating").performScrollTo().assertIsDisplayed()
+
+        // 1. Default EXIF Capture Date Descending: Alpine (newest) comes before Erg Chebbi (oldest)
+        assertTrue(
+            "Newest sample_lake_01 should precede oldest sample_desert_04 in Capture Date Desc",
+            comesBeforeInGrid("photo_card_sample_lake_01", "photo_card_sample_desert_04")
+        )
+
+        // 2. Sort by Filename (defaults to Asc): "Editorial..." precedes "Tokyo..."
+        composeTestRule.onNodeWithTag("sort_field_filename").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(
+            "Filename Asc should place Editorial (sample_portrait_03) before Tokyo (sample_street_02)",
+            comesBeforeInGrid("photo_card_sample_portrait_03", "photo_card_sample_street_02")
+        )
+
+        // Toggle Direction -> Filename Desc: "Tokyo..." comes first, before "Alpine..."
+        composeTestRule.onNodeWithTag("btn_toggle_sort_direction").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(
+            "Filename Desc should place Tokyo (sample_street_02) before Alpine (sample_lake_01)",
+            comesBeforeInGrid("photo_card_sample_street_02", "photo_card_sample_lake_01")
+        )
+
+        // 3. Switch to EXIF Capture Date Desc then tap again for Asc (oldest sample_desert_04 first)
+        composeTestRule.onNodeWithTag("sort_field_capture_date").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("sort_field_capture_date").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(
+            "Capture Date Asc should place oldest sample_desert_04 before newest sample_lake_01",
+            comesBeforeInGrid("photo_card_sample_desert_04", "photo_card_sample_lake_01")
+        )
+
+        // 4. Switch to Star Rating Desc (5★ first), then tap again for Star Rating Asc (3★ before 5★)
+        composeTestRule.onNodeWithTag("sort_field_star_rating").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(
+            "Star Rating Desc should place 5-star sample_lake_01 before 3-star sample_portrait_03",
+            comesBeforeInGrid("photo_card_sample_lake_01", "photo_card_sample_portrait_03")
+        )
+        composeTestRule.onNodeWithTag("sort_field_star_rating").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(
+            "Star Rating Asc should place 3-star sample_portrait_03 before 5-star sample_lake_01",
+            comesBeforeInGrid("photo_card_sample_portrait_03", "photo_card_sample_lake_01")
+        )
+
+        // Restore default sort order (EXIF Capture Date Desc) for test isolation
+        composeTestRule.onNodeWithTag("sort_field_capture_date").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun `launcher intent resolves MainActivity with Darktable label and valid adaptive icon`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val pm = context.packageManager
+        val launcherIntent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+            addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+            setPackage(context.packageName)
+        }
+        val resolved = pm.queryIntentActivities(launcherIntent, 0)
+        assertEquals("Exactly one launchable activity must be registered", 1, resolved.size)
+        val info = resolved.first()
+        assertEquals(MainActivity::class.java.name, info.activityInfo.name)
+        assertTrue(info.activityInfo.exported)
+        assertEquals("Darktable", info.loadLabel(pm).toString())
+
+        val icon = info.loadIcon(pm)
+        assertTrue("Launcher icon drawable must load non-null", icon != null)
+        val adaptive = androidx.core.content.ContextCompat.getDrawable(context, R.mipmap.ic_launcher)
+        assertTrue("Adaptive launcher icon drawable must inflate cleanly", adaptive != null)
+    }
+
+    @Test
+    @Config(qualifiers = "w411dp-h891dp")
+    fun `darkroom edit mode sliders have generous horizontal spacing from screen edges`() {
+        composeTestRule.waitUntil(timeoutMillis = 5000) {
+            composeTestRule.onAllNodesWithTag("photo_card_sample_lake_01")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("photo_card_sample_lake_01").performClick()
+
+        composeTestRule.waitUntil(timeoutMillis = 5000) {
+            composeTestRule.onAllNodesWithTag("slider_exposure_compensation")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        val rootBounds = composeTestRule.onRoot().getBoundsInRoot()
+        val sliderBounds = composeTestRule.onNodeWithTag("slider_exposure_compensation").getBoundsInRoot()
+
+        val leftGap = sliderBounds.left - rootBounds.left
+        val rightGap = rootBounds.right - sliderBounds.right
+        assertTrue("Left slider edge gap ($leftGap) must be at least 28.dp from screen edge", leftGap >= 28.dp)
+        assertTrue("Right slider edge gap ($rightGap) must be at least 28.dp from screen edge", rightGap >= 28.dp)
+    }
 }
+
 
 

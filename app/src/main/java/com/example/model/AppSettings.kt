@@ -26,5 +26,7 @@ enum class HistogramScale(val label: String, val badge: String, val description:
 
 data class AppSettings(
     val colorScheme: AppColorScheme = AppColorScheme.DARK,
-    val histogramScale: HistogramScale = HistogramScale.LINEAR
+    val histogramScale: HistogramScale = HistogramScale.LINEAR,
+    val sortField: SortField = SortField.CAPTURE_DATE,
+    val sortDirection: SortDirection = SortDirection.DESCENDING
 )
